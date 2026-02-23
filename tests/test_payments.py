@@ -41,7 +41,7 @@ class TestCreateCheckout:
         session_mock = MagicMock()
         session_mock.id = "cs_test_new"
         session_mock.url = "https://checkout.stripe.com/pay/cs_test_new"
-        mock_sc.checkout.sessions.create.return_value = session_mock
+        mock_sc.v1.checkout.sessions.create.return_value = session_mock
 
         client = client_factory(
             make_customer(), bookings_client=mock_bc, stripe_client=mock_sc
@@ -121,7 +121,7 @@ class TestCreateCheckout:
         session_mock = MagicMock()
         session_mock.id = "cs_test_admin"
         session_mock.url = "https://checkout.stripe.com/pay/cs_test_admin"
-        mock_sc.checkout.sessions.create.return_value = session_mock
+        mock_sc.v1.checkout.sessions.create.return_value = session_mock
 
         client = client_factory(
             make_admin(), bookings_client=mock_bc, stripe_client=mock_sc
@@ -223,7 +223,7 @@ class TestRefundBookingPayment:
         from app.schemas import PaymentResponse
 
         mock_sc = MagicMock()
-        mock_sc.refunds.create.return_value = MagicMock()
+        mock_sc.v1.refunds.create.return_value = MagicMock()
 
         owner = make_venue_owner(user_id=VENUE_OWNER_ID)
         client = client_factory(owner, stripe_client=mock_sc)
@@ -250,7 +250,7 @@ class TestRefundBookingPayment:
             resp = client.post(f"/payments/booking/{BOOKING_ID}/refund")
 
         assert resp.status_code == 200
-        mock_sc.refunds.create.assert_called_once_with(
+        mock_sc.v1.refunds.create.assert_called_once_with(
             params={"payment_intent": STRIPE_PAYMENT_INTENT_ID}
         )
 
@@ -258,7 +258,7 @@ class TestRefundBookingPayment:
         from app.schemas import PaymentResponse
 
         mock_sc = MagicMock()
-        mock_sc.refunds.create.return_value = MagicMock()
+        mock_sc.v1.refunds.create.return_value = MagicMock()
         client = client_factory(make_admin(), stripe_client=mock_sc)
 
         with patch("app.routers.payments.payment_crud") as mock_crud:

@@ -97,7 +97,7 @@ async def create_checkout(
     }
     product_name = _product_names.get(payload.locale or "", "Venue booking")
 
-    session = stripe_client.checkout.sessions.create(
+    session = stripe_client.v1.checkout.sessions.create(
         params={
             "mode": "payment",
             "locale": cast(Literal["en", "bg", "auto"], payload.locale or "auto"),
@@ -245,7 +245,7 @@ async def refund_booking_payment(
             detail="Cannot refund: no payment intent on record.",
         )
 
-    stripe_client.refunds.create(
+    stripe_client.v1.refunds.create(
         params={"payment_intent": payment.stripe_payment_intent_id}
     )
 
@@ -382,7 +382,7 @@ async def abandon_checkout(
         )
 
     try:
-        stripe_client.checkout.sessions.expire(payment.stripe_session_id)
+        stripe_client.v1.checkout.sessions.expire(payment.stripe_session_id)
     except stripe.InvalidRequestError:
         # Session already expired or completed — webhook will handle the rest
         pass
