@@ -25,17 +25,6 @@ from app.scopes import PaymentScope
 router = APIRouter(prefix="/payments", tags=["payments"])
 
 
-def _with_locale(base_url: str, locale: str | None) -> str:
-    """Prefix the /bookings path segment with the locale if provided.
-
-    e.g. "http://localhost/bookings?payment=success", "en"
-         → "http://localhost/en/bookings?payment=success"
-    """
-    if not locale:
-        return base_url
-    return base_url.replace("/bookings?", f"/{locale}/bookings?", 1)
-
-
 # ---------------------------------------------------------------------------
 # POST /payments/checkout
 # ---------------------------------------------------------------------------
@@ -93,12 +82,11 @@ async def create_checkout(
     total_price = Decimal(str(booking["total_price"]))
     currency = booking.get("currency", "EUR").lower()
     amount_cents = int(total_price * 100)
+    locale = payload.locale or "en"
 
-    # Append a placeholder that Stripe replaces with the real session ID.
-    # Inject locale prefix into the return URLs so Stripe redirects the customer
-    # to the correct locale path (e.g. /en/bookings rather than /bookings).
-    # success_url = _with_locale(settings.stripe_success_url, payload.locale) + "&session_id={CHECKOUT_SESSION_ID}"
-    # cancel_url = _with_locale(settings.stripe_cancel_url, payload.locale)
+    # Append a placeholder that Stripe replaces with the real session ID
+    success_url = settings.stripe_success_url + "&session_id={CHECKOUT_SESSION_ID}"
+    cancel_url = settings.stripe_cancel_url
 
     expires_at = datetime.now(UTC) + timedelta(
         minutes=settings.stripe_checkout_expires_minutes
@@ -110,10 +98,12 @@ async def create_checkout(
     }
     product_name = _product_names.get(payload.locale or "", "Venue booking")
 
+    print(locale)
+
     session = stripe_client.v1.checkout.sessions.create(
         params={
             "mode": "payment",
-            "locale": cast(Literal["en", "bg", "auto"], payload.locale or "auto"),
+            "locale": cast(Literal["en", "bg", "auto"], locale),
             "line_items": [
                 {
                     "price_data": {
@@ -136,8 +126,8 @@ async def create_checkout(
                 "booking_id": str(payload.booking_id),
                 "user_id": str(current_user.id),
             },
-            "success_url": settings.stripe_success_url,
-            "cancel_url": settings.stripe_cancel_url,
+            "success_url": success_url,
+            "cancel_url": cancel_url,
             "expires_at": int(expires_at.timestamp()),
         }
     )
