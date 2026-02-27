@@ -35,4 +35,9 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 EXPOSE 8003
 
-CMD ["uv", "run", "uvicorn", "main:application", "--host", "0.0.0.0", "--port", "8003"]
+ENV UVICORN_PORT=8003
+
+COPY entrypoint.sh .
+RUN chmod +x entrypoint.sh
+
+ENTRYPOINT ["./entrypoint.sh"]
