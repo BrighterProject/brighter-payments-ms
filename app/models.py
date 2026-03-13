@@ -17,7 +17,7 @@ class Payment(Model):
     # Denormalized references to bookings-ms
     booking_id = fields.UUIDField()  # allows multiple attempts per booking
     user_id = fields.UUIDField()  # the customer who made the booking
-    venue_owner_id = fields.UUIDField()  # snapshot from booking at creation time
+    property_owner_id = fields.UUIDField()  # snapshot from booking at creation time
 
     # Stripe identifiers
     stripe_session_id = fields.CharField(max_length=255, unique=True)

@@ -19,7 +19,7 @@ class PaymentResponse(BaseModel):
     id: UUID
     booking_id: UUID
     user_id: UUID
-    venue_owner_id: UUID
+    property_owner_id: UUID
     stripe_session_id: str
     stripe_payment_intent_id: str | None
     amount: Decimal

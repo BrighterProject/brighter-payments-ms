@@ -15,7 +15,7 @@ class PaymentCRUD(CRUD[Payment, PaymentResponse]):  # type: ignore
         *,
         booking_id: UUID,
         user_id: UUID,
-        venue_owner_id: UUID,
+        property_owner_id: UUID,
         stripe_session_id: str,
         amount: Decimal,
         currency: str,
@@ -23,7 +23,7 @@ class PaymentCRUD(CRUD[Payment, PaymentResponse]):  # type: ignore
         inst = await Payment.create(
             booking_id=booking_id,
             user_id=user_id,
-            venue_owner_id=venue_owner_id,
+            property_owner_id=property_owner_id,
             stripe_session_id=stripe_session_id,
             amount=amount,
             currency=currency,

@@ -16,7 +16,7 @@ from app.scopes import PaymentScope
 # ---------------------------------------------------------------------------
 
 CUSTOMER_ID: UUID = uuid4()
-VENUE_OWNER_ID: UUID = uuid4()
+PROPERTY_OWNER_ID: UUID = uuid4()
 ADMIN_ID: UUID = uuid4()
 OTHER_USER_ID: UUID = uuid4()
 
@@ -44,8 +44,8 @@ def make_customer(
     return CurrentUser(id=user_id, username=f"customer_{user_id}", scopes=scopes)
 
 
-def make_venue_owner(
-    user_id: UUID = VENUE_OWNER_ID,
+def make_property_owner(
+    user_id: UUID = PROPERTY_OWNER_ID,
     scopes: list[str] | None = None,
 ) -> CurrentUser:
     if scopes is None:
@@ -78,7 +78,7 @@ def payment_response(**overrides) -> dict:
         id=str(PAYMENT_ID),
         booking_id=str(BOOKING_ID),
         user_id=str(CUSTOMER_ID),
-        venue_owner_id=str(VENUE_OWNER_ID),
+        property_owner_id=str(PROPERTY_OWNER_ID),
         stripe_session_id=STRIPE_SESSION_ID,
         stripe_payment_intent_id=STRIPE_PAYMENT_INTENT_ID,
         amount="40.00",
@@ -93,8 +93,8 @@ def booking_dict(**overrides) -> dict:
     """Minimal bookings-ms booking representation used by BookingsClient mocks."""
     base = dict(
         id=str(BOOKING_ID),
-        venue_id=str(uuid4()),
-        venue_owner_id=str(VENUE_OWNER_ID),
+        property_id=str(uuid4()),
+        property_owner_id=str(PROPERTY_OWNER_ID),
         user_id=str(CUSTOMER_ID),
         start_datetime=NOW.isoformat(),
         end_datetime=LATER.isoformat(),

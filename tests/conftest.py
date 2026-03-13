@@ -19,7 +19,7 @@ from app.deps import (
 )
 from app.routers.payments import router
 
-from .factories import make_admin, make_customer, make_venue_owner
+from .factories import make_admin, make_customer, make_property_owner
 
 # ---------------------------------------------------------------------------
 # Default no-op mocks — prevent real HTTP / Stripe calls in tests
@@ -92,7 +92,7 @@ def customer_client():
 
 @pytest.fixture()
 def owner_client():
-    return TestClient(build_app(make_venue_owner()), raise_server_exceptions=True)
+    return TestClient(build_app(make_property_owner()), raise_server_exceptions=True)
 
 
 @pytest.fixture()

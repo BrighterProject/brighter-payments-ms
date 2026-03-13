@@ -1,6 +1,6 @@
-# CLAUDE.md — ploshtadka-payments-ms
+# CLAUDE.md — brighter-payments-ms
 
-FastAPI microservice for Stripe payment processing (part of the PloshtadkaBG platform).
+FastAPI microservice for Stripe payment processing (part of the BrighterProject platform).
 
 ## Package management
 
@@ -49,11 +49,11 @@ Auth is delegated entirely to Traefik via `forwardAuth`. JWT validation happens 
 3. Frontend redirects customer to `checkout_url`
 4. Customer completes payment on Stripe-hosted page
 5. Stripe fires `checkout.session.completed` webhook → payment marked PAID
-6. Venue owner sees PENDING booking and confirms/cancels manually
+6. Property owner sees PENDING booking and confirms/cancels manually
 
 ### Refund flow
 
-- When venue owner cancels a booking, bookings-ms calls `POST /payments/booking/{id}/refund`
+- When property owner cancels a booking, bookings-ms calls `POST /payments/booking/{id}/refund`
   forwarding the owner's auth headers → full Stripe refund issued
 - Customer cancellations do NOT trigger a refund (no-refund policy for customer cancellations)
 
@@ -94,7 +94,7 @@ app/
     payments.py        # /payments endpoints
 tests/
   conftest.py          # Fixtures: customer_client, owner_client, admin_client, anon_app, client_factory
-  factories.py         # make_customer(), make_venue_owner(), make_admin(), payment_response(), etc.
+  factories.py         # make_customer(), make_property_owner(), make_admin(), payment_response(), etc.
   test_payments.py     # Full endpoint test suite
   test_scopes.py       # Scope enum/description tests
 ```

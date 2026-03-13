@@ -17,12 +17,12 @@ from tests.factories import (
     PAYMENT_ID,
     STRIPE_PAYMENT_INTENT_ID,
     STRIPE_SESSION_ID,
-    VENUE_OWNER_ID,
+    PROPERTY_OWNER_ID,
     booking_dict,
     checkout_payload,
     make_admin,
     make_customer,
-    make_venue_owner,
+    make_property_owner,
     payment_response,
 )
 
@@ -219,13 +219,13 @@ class TestGetPaymentByBooking:
 
 
 class TestRefundBookingPayment:
-    def test_venue_owner_can_refund(self, client_factory):
+    def test_property_owner_can_refund(self, client_factory):
         from app.schemas import PaymentResponse
 
         mock_sc = MagicMock()
         mock_sc.v1.refunds.create.return_value = MagicMock()
 
-        owner = make_venue_owner(user_id=VENUE_OWNER_ID)
+        owner = make_property_owner(user_id=PROPERTY_OWNER_ID)
         client = client_factory(owner, stripe_client=mock_sc)
 
         with patch("app.routers.payments.payment_crud") as mock_crud:
@@ -237,7 +237,7 @@ class TestRefundBookingPayment:
                     id=PAYMENT_ID,
                     booking_id=BOOKING_ID,
                     user_id=CUSTOMER_ID,
-                    venue_owner_id=VENUE_OWNER_ID,
+                    property_owner_id=PROPERTY_OWNER_ID,
                     stripe_session_id=STRIPE_SESSION_ID,
                     stripe_payment_intent_id=STRIPE_PAYMENT_INTENT_ID,
                     amount="40.00",
@@ -270,7 +270,7 @@ class TestRefundBookingPayment:
                     id=PAYMENT_ID,
                     booking_id=BOOKING_ID,
                     user_id=CUSTOMER_ID,
-                    venue_owner_id=VENUE_OWNER_ID,
+                    property_owner_id=PROPERTY_OWNER_ID,
                     stripe_session_id=STRIPE_SESSION_ID,
                     stripe_payment_intent_id=STRIPE_PAYMENT_INTENT_ID,
                     amount="40.00",

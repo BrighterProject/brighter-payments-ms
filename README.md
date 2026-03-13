@@ -1,4 +1,4 @@
-# ploshtadka-payments-ms
+# brighter-payments-ms
 
 Handles Stripe Checkout sessions, webhooks, and refunds.
 
@@ -19,7 +19,7 @@ Handles Stripe Checkout sessions, webhooks, and refunds.
 1. Booking created (PENDING) → frontend calls `/payments/checkout` → Stripe Checkout session
 2. Customer pays on Stripe-hosted page
 3. Stripe fires `checkout.session.completed` → payment marked PAID
-4. Venue owner confirms/cancels booking manually
+4. Property owner confirms/cancels booking manually
 
 Refund policy: owner cancels → full refund. Customer cancels → no refund.
 

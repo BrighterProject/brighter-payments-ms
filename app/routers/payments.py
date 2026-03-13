@@ -97,9 +97,9 @@ async def create_checkout(
 
     _product_names = {
         "bg": "Резервация на база",
-        "en": "Venue booking",
+        "en": "Property booking",
     }
-    product_name = _product_names.get(payload.locale or "", "Venue booking")
+    product_name = _product_names.get(payload.locale or "", "Property booking")
 
     session = stripe_client.v1.checkout.sessions.create(
         params={
@@ -136,7 +136,7 @@ async def create_checkout(
     payment = await payment_crud.create(
         booking_id=payload.booking_id,
         user_id=current_user.id,
-        venue_owner_id=UUID(booking["venue_owner_id"]),
+        property_owner_id=UUID(booking["property_owner_id"]),
         stripe_session_id=session.id,
         amount=total_price,
         currency=booking.get("currency", "EUR").upper(),
@@ -221,7 +221,7 @@ async def refund_booking_payment(
 
     Authorised callers:
       - Admins (admin:payments:write or admin:scopes)
-      - The venue owner (bookings-ms forwards their headers when they cancel)
+      - The property owner (bookings-ms forwards their headers when they cancel)
     """
     payment = await payment_crud.get_by_booking_paid(booking_id)
     if payment is None:
@@ -235,12 +235,12 @@ async def refund_booking_payment(
         or PaymentScope.ADMIN_WRITE in current_user.scopes
         or "admin:scopes" in current_user.scopes
     )
-    is_venue_owner = current_user.id == payment.venue_owner_id
+    is_property_owner = current_user.id == payment.property_owner_id
 
-    if not (is_admin or is_venue_owner):
+    if not (is_admin or is_property_owner):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only the venue owner or an admin can refund this payment.",
+            detail="Only the property owner or an admin can refund this payment.",
         )
 
     if not payment.stripe_payment_intent_id:

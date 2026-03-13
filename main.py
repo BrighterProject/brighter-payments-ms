@@ -17,7 +17,7 @@ if stripe_secret_key in _PLACEHOLDER_KEYS or stripe_webhook_secret in _PLACEHOLD
         "Set real keys via environment variables before processing payments."
     )
 
-application = FastAPI(title="ploshtadka-payments-ms", redirect_slashes=False)
+application = FastAPI(title="brighter-payments-ms", redirect_slashes=False)
 
 application.add_middleware(
     CORSMiddleware,
