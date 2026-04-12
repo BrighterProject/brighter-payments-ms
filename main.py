@@ -27,4 +27,6 @@ application.add_middleware(
     allow_headers=["*"],
 )
 
-tortoise_conf = setup_app(application, db_url, Path("app") / "routers", ["app.models"])
+tortoise_conf = setup_app(
+    application, db_url, Path("app") / "routers", ["app.models", "aerich.models"]
+)
