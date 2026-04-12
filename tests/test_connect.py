@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from app.deps import get_current_user, get_stripe_client
 from app.routers.connect import router as connect_router
 
-from .factories import make_property_owner, PROPERTY_OWNER_ID
+from .factories import PROPERTY_OWNER_ID, make_property_owner
 
 # ---------------------------------------------------------------------------
 # Shared constants
@@ -55,7 +55,9 @@ def build_connect_app(current_user, stripe_client=None) -> FastAPI:
 
 @pytest.fixture()
 def owner_client():
-    return TestClient(build_connect_app(make_property_owner()), raise_server_exceptions=True)
+    return TestClient(
+        build_connect_app(make_property_owner()), raise_server_exceptions=True
+    )
 
 
 @pytest.fixture()
@@ -72,7 +74,9 @@ def anon_app():
 
 
 def test_status_not_connected(owner_client):
-    with patch("app.routers.connect.connect_crud.get_by_owner", AsyncMock(return_value=None)):
+    with patch(
+        "app.routers.connect.connect_crud.get_by_owner", AsyncMock(return_value=None)
+    ):
         resp = owner_client.get("/payments/connect/status")
     assert resp.status_code == 200
     assert resp.json() == {
@@ -93,7 +97,10 @@ def test_status_connected_verified(owner_client):
     mock_account.charges_enabled = True
     mock_account.requirements_outstanding = False
 
-    with patch("app.routers.connect.connect_crud.get_by_owner", AsyncMock(return_value=mock_account)):
+    with patch(
+        "app.routers.connect.connect_crud.get_by_owner",
+        AsyncMock(return_value=mock_account),
+    ):
         resp = owner_client.get("/payments/connect/status")
 
     assert resp.status_code == 200
@@ -114,7 +121,10 @@ def test_status_connected_pending(owner_client):
     mock_account.charges_enabled = False
     mock_account.requirements_outstanding = False
 
-    with patch("app.routers.connect.connect_crud.get_by_owner", AsyncMock(return_value=mock_account)):
+    with patch(
+        "app.routers.connect.connect_crud.get_by_owner",
+        AsyncMock(return_value=mock_account),
+    ):
         resp = owner_client.get("/payments/connect/status")
 
     data = resp.json()
@@ -133,7 +143,10 @@ def test_status_shows_requirements_outstanding(owner_client):
     mock_account.charges_enabled = True
     mock_account.requirements_outstanding = True
 
-    with patch("app.routers.connect.connect_crud.get_by_owner", AsyncMock(return_value=mock_account)):
+    with patch(
+        "app.routers.connect.connect_crud.get_by_owner",
+        AsyncMock(return_value=mock_account),
+    ):
         resp = owner_client.get("/payments/connect/status")
 
     assert resp.json()["requirements_outstanding"] is True
@@ -178,7 +191,10 @@ def test_onboard_reuses_existing_account_when_connected(owner_client):
     existing.stripe_account_id = STRIPE_ACCOUNT_ID
 
     sc = _noop_stripe_client()
-    client = TestClient(build_connect_app(make_property_owner(), stripe_client=sc), raise_server_exceptions=True)
+    client = TestClient(
+        build_connect_app(make_property_owner(), stripe_client=sc),
+        raise_server_exceptions=True,
+    )
 
     with patch(
         "app.routers.connect.connect_crud.get_by_owner",
@@ -194,7 +210,10 @@ def test_onboard_reuses_existing_account_when_connected(owner_client):
 def test_onboard_account_link_uses_correct_type(owner_client):
     """Account link must be of type account_onboarding."""
     sc = _noop_stripe_client()
-    client = TestClient(build_connect_app(make_property_owner(), stripe_client=sc), raise_server_exceptions=True)
+    client = TestClient(
+        build_connect_app(make_property_owner(), stripe_client=sc),
+        raise_server_exceptions=True,
+    )
 
     with (
         patch(
@@ -264,7 +283,10 @@ def test_disconnect_still_removes_if_stripe_delete_fails(owner_client):
     sc.v1.accounts.delete.side_effect = Exception("Stripe error")
 
     delete_mock = AsyncMock(return_value=True)
-    client = TestClient(build_connect_app(make_property_owner(), stripe_client=sc), raise_server_exceptions=True)
+    client = TestClient(
+        build_connect_app(make_property_owner(), stripe_client=sc),
+        raise_server_exceptions=True,
+    )
 
     with (
         patch(
@@ -309,7 +331,9 @@ async def test_crud_get_by_owner_returns_record_when_found():
     mock_inst = MagicMock(spec=OwnerStripeAccount)
     mock_inst.stripe_account_id = STRIPE_ACCOUNT_ID
 
-    with patch.object(OwnerStripeAccount, "get_or_none", AsyncMock(return_value=mock_inst)):
+    with patch.object(
+        OwnerStripeAccount, "get_or_none", AsyncMock(return_value=mock_inst)
+    ):
         result = await ConnectCRUD().get_by_owner(PROPERTY_OWNER_ID)
 
     assert result is mock_inst
@@ -345,7 +369,9 @@ async def test_crud_upsert_updates_when_exists():
     existing.save = AsyncMock()
     existing.stripe_account_id = "acct_old"
 
-    with patch.object(OwnerStripeAccount, "get_or_none", AsyncMock(return_value=existing)):
+    with patch.object(
+        OwnerStripeAccount, "get_or_none", AsyncMock(return_value=existing)
+    ):
         await ConnectCRUD().upsert(
             PROPERTY_OWNER_ID, STRIPE_ACCOUNT_ID, verified=True, charges_enabled=True
         )
@@ -365,7 +391,9 @@ async def test_crud_update_charges_enabled():
     mock_qs.update = AsyncMock(return_value=1)
 
     with patch.object(OwnerStripeAccount, "filter", return_value=mock_qs):
-        await ConnectCRUD().update_charges_enabled(STRIPE_ACCOUNT_ID, charges_enabled=True)
+        await ConnectCRUD().update_charges_enabled(
+            STRIPE_ACCOUNT_ID, charges_enabled=True
+        )
 
     mock_qs.update.assert_called_once_with(charges_enabled=True, verified=True)
 
@@ -404,8 +432,9 @@ async def test_crud_delete_returns_false_when_not_found():
 
 
 def test_require_owner_blocks_regular_user():
-    from app.deps import CurrentUser, require_owner
     from fastapi import HTTPException
+
+    from app.deps import CurrentUser, require_owner
 
     user = CurrentUser(id=uuid4(), username="user", scopes=["payments:read"])
     with pytest.raises(HTTPException) as exc_info:
@@ -434,15 +463,17 @@ def test_require_owner_allows_admin():
 # ---------------------------------------------------------------------------
 
 
-def _make_connect_stripe_client(event_type: str, account_id: str, *, charges_enabled: bool = True):
+def _make_connect_stripe_client(
+    event_type: str, account_id: str, *, charges_enabled: bool = True
+):
     """Build a mock StripeClient for connect webhook tests."""
     sc = MagicMock()
 
-    # parse_thin_event returns a thin event
+    # parse_event_notification returns a thin event
     thin_event = MagicMock()
     thin_event.type = event_type
     thin_event.related_object.id = account_id
-    sc.parse_thin_event.return_value = thin_event
+    sc.parse_event_notification.return_value = thin_event
 
     # v1.accounts.retrieve returns a minimal account object
     account = MagicMock()
@@ -456,10 +487,14 @@ def _make_connect_stripe_client(event_type: str, account_id: str, *, charges_ena
 
 class TestConnectWebhook:
     def test_account_updated_flips_charges_enabled(self, owner_client):
-        sc = _make_connect_stripe_client("v2.core.account.updated", STRIPE_ACCOUNT_ID, charges_enabled=True)
+        sc = _make_connect_stripe_client(
+            "v2.core.account.updated", STRIPE_ACCOUNT_ID, charges_enabled=True
+        )
         client = TestClient(build_connect_app(make_property_owner(), stripe_client=sc))
 
-        with patch("app.routers.connect.connect_crud.update_charges_enabled", AsyncMock()) as mock_update:
+        with patch(
+            "app.routers.connect.connect_crud.update_charges_enabled", AsyncMock()
+        ) as mock_update:
             resp = client.post(
                 "/payments/connect/webhook",
                 content=b'{"type":"v2.core.account.updated"}',
@@ -471,13 +506,17 @@ class TestConnectWebhook:
         mock_update.assert_called_once_with(STRIPE_ACCOUNT_ID, True)
 
     def test_account_updated_charges_disabled(self, owner_client):
-        sc = _make_connect_stripe_client("v2.core.account.updated", STRIPE_ACCOUNT_ID, charges_enabled=False)
+        sc = _make_connect_stripe_client(
+            "v2.core.account.updated", STRIPE_ACCOUNT_ID, charges_enabled=False
+        )
         client = TestClient(build_connect_app(make_property_owner(), stripe_client=sc))
 
-        with patch("app.routers.connect.connect_crud.update_charges_enabled", AsyncMock()) as mock_update:
+        with patch(
+            "app.routers.connect.connect_crud.update_charges_enabled", AsyncMock()
+        ) as mock_update:
             resp = client.post(
                 "/payments/connect/webhook",
-                content=b'{}',
+                content=b"{}",
                 headers={"Stripe-Signature": "t=1,v1=abc"},
             )
 
@@ -489,14 +528,18 @@ class TestConnectWebhook:
             "v2.core.account[requirements].updated", STRIPE_ACCOUNT_ID
         )
         # Simulate an outstanding currently_due requirement
-        sc.v1.accounts.retrieve.return_value.requirements.currently_due = ["individual.id_number"]
+        sc.v1.accounts.retrieve.return_value.requirements.currently_due = [
+            "individual.id_number"
+        ]
         sc.v1.accounts.retrieve.return_value.requirements.past_due = []
         client = TestClient(build_connect_app(make_property_owner(), stripe_client=sc))
 
-        with patch("app.routers.connect.connect_crud.update_requirements", AsyncMock()) as mock_update:
+        with patch(
+            "app.routers.connect.connect_crud.update_requirements", AsyncMock()
+        ) as mock_update:
             resp = client.post(
                 "/payments/connect/webhook",
-                content=b'{}',
+                content=b"{}",
                 headers={"Stripe-Signature": "t=1,v1=abc"},
             )
 
@@ -512,10 +555,12 @@ class TestConnectWebhook:
         sc.v1.accounts.retrieve.return_value.requirements.past_due = []
         client = TestClient(build_connect_app(make_property_owner(), stripe_client=sc))
 
-        with patch("app.routers.connect.connect_crud.update_requirements", AsyncMock()) as mock_update:
+        with patch(
+            "app.routers.connect.connect_crud.update_requirements", AsyncMock()
+        ) as mock_update:
             resp = client.post(
                 "/payments/connect/webhook",
-                content=b'{}',
+                content=b"{}",
                 headers={"Stripe-Signature": "t=1,v1=abc"},
             )
 
@@ -526,10 +571,13 @@ class TestConnectWebhook:
         import stripe as stripe_lib
 
         sc = MagicMock()
-        sc.parse_thin_event.side_effect = stripe_lib.SignatureVerificationError(
+        sc.parse_event_notification.side_effect = stripe_lib.SignatureVerificationError(
             "invalid", "sig"
         )
-        client = TestClient(build_connect_app(make_property_owner(), stripe_client=sc), raise_server_exceptions=False)
+        client = TestClient(
+            build_connect_app(make_property_owner(), stripe_client=sc),
+            raise_server_exceptions=False,
+        )
 
         resp = client.post(
             "/payments/connect/webhook",
@@ -540,8 +588,11 @@ class TestConnectWebhook:
 
     def test_invalid_payload_returns_400(self, owner_client):
         sc = MagicMock()
-        sc.parse_thin_event.side_effect = ValueError("bad payload")
-        client = TestClient(build_connect_app(make_property_owner(), stripe_client=sc), raise_server_exceptions=False)
+        sc.parse_event_notification.side_effect = ValueError("bad payload")
+        client = TestClient(
+            build_connect_app(make_property_owner(), stripe_client=sc),
+            raise_server_exceptions=False,
+        )
 
         resp = client.post(
             "/payments/connect/webhook",
@@ -551,12 +602,14 @@ class TestConnectWebhook:
         assert resp.status_code == 400
 
     def test_unknown_event_type_returns_200(self, owner_client):
-        sc = _make_connect_stripe_client("v2.core.account.something_else", STRIPE_ACCOUNT_ID)
+        sc = _make_connect_stripe_client(
+            "v2.core.account.something_else", STRIPE_ACCOUNT_ID
+        )
         client = TestClient(build_connect_app(make_property_owner(), stripe_client=sc))
 
         resp = client.post(
             "/payments/connect/webhook",
-            content=b'{}',
+            content=b"{}",
             headers={"Stripe-Signature": "t=1,v1=abc"},
         )
         assert resp.status_code == 200
@@ -577,7 +630,9 @@ async def test_crud_update_requirements_sets_flag():
     mock_qs.update = AsyncMock(return_value=1)
 
     with patch.object(OwnerStripeAccount, "filter", return_value=mock_qs):
-        await ConnectCRUD().update_requirements(STRIPE_ACCOUNT_ID, has_requirements=True)
+        await ConnectCRUD().update_requirements(
+            STRIPE_ACCOUNT_ID, has_requirements=True
+        )
 
     mock_qs.update.assert_called_once_with(requirements_outstanding=True)
 
@@ -591,6 +646,8 @@ async def test_crud_update_requirements_clears_flag():
     mock_qs.update = AsyncMock(return_value=1)
 
     with patch.object(OwnerStripeAccount, "filter", return_value=mock_qs):
-        await ConnectCRUD().update_requirements(STRIPE_ACCOUNT_ID, has_requirements=False)
+        await ConnectCRUD().update_requirements(
+            STRIPE_ACCOUNT_ID, has_requirements=False
+        )
 
     mock_qs.update.assert_called_once_with(requirements_outstanding=False)

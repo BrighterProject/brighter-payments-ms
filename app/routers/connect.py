@@ -49,9 +49,7 @@ async def onboard_connect(
     account = await connect_crud.get_by_owner(current_user.id)
 
     if account is None:
-        stripe_account = stripe_client.v1.accounts.create(
-            params={"type": "express"}
-        )
+        stripe_account = stripe_client.v1.accounts.create(params={"type": "express"})
         stripe_account_id = stripe_account.id
         await connect_crud.upsert(
             current_user.id,
@@ -129,7 +127,7 @@ async def connect_webhook(
     sig_header = request.headers.get("Stripe-Signature", "")
 
     try:
-        thin_event = stripe_client.parse_thin_event(
+        thin_event = stripe_client.parse_event_notification(
             raw_body, sig_header, settings.stripe_connect_webhook_secret
         )
     except stripe.SignatureVerificationError as exc:
@@ -143,22 +141,25 @@ async def connect_webhook(
             detail="Invalid webhook payload.",
         ) from exc
 
-    account_id: str | None = (
-        thin_event.related_object.id if thin_event.related_object else None
-    )
+    print(thin_event.type.startswith("v2.core.account"), thin_event.type)
 
-    if thin_event.type == "v2.core.account.updated" and account_id:
-        # Fetch current account state and update charges_enabled / verified.
-        account = stripe_client.v1.accounts.retrieve(account_id)
-        await connect_crud.update_charges_enabled(account_id, bool(account.charges_enabled))
+    if thin_event.type.startswith("v2.core.account"):
+        account_id: str = thin_event.related_object.id  # type: ignore
 
-    elif thin_event.type == "v2.core.account[requirements].updated" and account_id:
-        # Retrieve the account to inspect its requirements.
-        account = stripe_client.v1.accounts.retrieve(account_id)
-        reqs = account.requirements
-        has_requirements = bool(
-            (reqs and reqs.currently_due) or (reqs and reqs.past_due)
-        )
-        await connect_crud.update_requirements(account_id, has_requirements)
+        if thin_event.type == "v2.core.account.updated":
+            # Fetch current account state and update charges_enabled / verified.
+            account = stripe_client.v1.accounts.retrieve(account_id)
+            await connect_crud.update_charges_enabled(
+                account_id, bool(account.charges_enabled)
+            )
+
+        elif thin_event.type == "v2.core.account[requirements].updated":
+            # Retrieve the account to inspect its requirements.
+            account = stripe_client.v1.accounts.retrieve(account_id)
+            reqs = account.requirements
+            has_requirements = bool(
+                (reqs and reqs.currently_due) or (reqs and reqs.past_due)
+            )
+            await connect_crud.update_requirements(account_id, has_requirements)
 
     return {"received": True}
