@@ -94,6 +94,18 @@ can_read_payment = require_scopes(PaymentScope.READ)
 can_admin_delete_payment = require_scopes(PaymentScope.ADMIN_DELETE)
 
 
+def require_owner(
+    current_user: CurrentUser = Depends(get_current_user),
+) -> CurrentUser:
+    """Allow only property owners (bookings:manage scope) and admins."""
+    if "bookings:manage" not in current_user.scopes and not current_user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Property owner access required.",
+        )
+    return current_user
+
+
 # ---------------------------------------------------------------------------
 # Stripe client — singleton, never re-created between requests
 # ---------------------------------------------------------------------------
