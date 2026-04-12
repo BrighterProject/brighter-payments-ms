@@ -45,3 +45,36 @@ async def onboard_connect(
         }
     )
     return OnboardResponse(redirect_url=f"https://connect.stripe.com/oauth/authorize?{params}")
+
+
+@router.get("/callback")
+async def connect_callback(
+    code: str,
+    state: str,
+    current_user: CurrentUser = Depends(get_current_user),
+    stripe_client: StripeClient = Depends(get_stripe_client),
+) -> RedirectResponse:
+    """
+    Stripe OAuth callback. Stripe redirects the owner's browser here after
+    they approve the Connect flow. The `state` param must match the
+    authenticated user's ID (CSRF protection).
+    """
+    if state != str(current_user.id):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid state parameter.",
+        )
+
+    oauth_response = stripe.OAuth.token(
+        code=code,
+        grant_type="authorization_code",
+        client_secret=settings.stripe_secret_key,
+    )
+    stripe_account_id: str = oauth_response.stripe_user_id
+
+    account = stripe_client.v1.accounts.retrieve(stripe_account_id)
+    verified = bool(account.details_submitted) and not account.requirements.disabled_reason
+
+    await connect_crud.upsert(current_user.id, stripe_account_id, verified=verified)
+
+    return RedirectResponse(url=settings.stripe_connect_success_url)

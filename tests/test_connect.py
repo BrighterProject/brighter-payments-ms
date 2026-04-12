@@ -70,6 +70,72 @@ def anon_app():
 
 
 # ---------------------------------------------------------------------------
+# GET /payments/connect/callback
+# ---------------------------------------------------------------------------
+
+
+def test_callback_stores_account_and_redirects(owner_client):
+    mock_oauth_resp = MagicMock()
+    mock_oauth_resp.stripe_user_id = STRIPE_ACCOUNT_ID
+
+    with (
+        patch("stripe.OAuth.token", return_value=mock_oauth_resp),
+        patch(
+            "app.routers.connect.connect_crud.upsert",
+            AsyncMock(return_value=MagicMock()),
+        ),
+    ):
+        resp = owner_client.get(
+            "/payments/connect/callback",
+            params={"code": "ac_test_code", "state": str(PROPERTY_OWNER_ID)},
+            follow_redirects=False,
+        )
+
+    assert resp.status_code == 307
+    assert "/admin/settings/payments" in resp.headers["location"]
+
+
+def test_callback_rejects_mismatched_state(owner_client):
+    resp = owner_client.get(
+        "/payments/connect/callback",
+        params={"code": "ac_test_code", "state": str(uuid4())},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 400
+
+
+def test_callback_sets_verified_from_stripe_account(owner_client):
+    """verified=True when account.details_submitted=True and no disabled_reason."""
+    mock_oauth_resp = MagicMock()
+    mock_oauth_resp.stripe_user_id = STRIPE_ACCOUNT_ID
+
+    upsert_mock = AsyncMock(return_value=MagicMock())
+
+    with (
+        patch("stripe.OAuth.token", return_value=mock_oauth_resp),
+        patch("app.routers.connect.connect_crud.upsert", upsert_mock),
+    ):
+        owner_client.get(
+            "/payments/connect/callback",
+            params={"code": "ac_test_code", "state": str(PROPERTY_OWNER_ID)},
+            follow_redirects=False,
+        )
+
+    # _noop_stripe_client has details_submitted=True and no disabled_reason
+    _, kwargs = upsert_mock.call_args
+    assert kwargs["verified"] is True
+
+
+def test_callback_requires_auth(anon_app):
+    client = TestClient(anon_app, raise_server_exceptions=False)
+    resp = client.get(
+        "/payments/connect/callback",
+        params={"code": "ac_test_code", "state": str(uuid4())},
+    )
+    assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
 # POST /payments/connect/onboard
 # ---------------------------------------------------------------------------
 
