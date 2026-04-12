@@ -39,6 +39,7 @@ class OwnerStripeAccount(Model):
     id = fields.UUIDField(primary_key=True)
     owner_id = fields.UUIDField(unique=True)
     stripe_account_id = fields.CharField(max_length=255, unique=True)
+    charges_enabled = fields.BooleanField(default=False)
     verified = fields.BooleanField(default=False)
 
     class Meta:  # type: ignore

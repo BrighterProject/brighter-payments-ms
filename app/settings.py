@@ -23,12 +23,16 @@ stripe_checkout_expires_minutes = int(
     os.environ.get("STRIPE_CHECKOUT_EXPIRES_MINUTES", "30")
 )
 
-stripe_connect_client_id = os.environ.get("STRIPE_CONNECT_CLIENT_ID", "ca_placeholder")
-stripe_connect_redirect_uri = os.environ.get(
-    "STRIPE_CONNECT_REDIRECT_URI",
-    "http://localhost/payments/connect/callback",
+stripe_connect_refresh_uri = os.environ.get(
+    "STRIPE_CONNECT_REFRESH_URI",
+    "http://localhost/payments/connect/onboard",
 )
 stripe_connect_success_url = os.environ.get(
     "STRIPE_CONNECT_SUCCESS_URL",
     "http://localhost/admin/settings/payments",
+)
+
+# Platform fee charged on each payment routed to a connected account (percentage)
+stripe_platform_fee_percent = float(
+    os.environ.get("STRIPE_PLATFORM_FEE_PERCENT", "10.0")
 )

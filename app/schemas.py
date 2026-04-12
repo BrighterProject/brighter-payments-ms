@@ -50,4 +50,5 @@ class OnboardResponse(BaseModel):
 class ConnectStatusResponse(BaseModel):
     connected: bool
     verified: bool
+    charges_enabled: bool
     stripe_account_id: str | None

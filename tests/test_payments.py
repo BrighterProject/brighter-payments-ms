@@ -47,7 +47,10 @@ class TestCreateCheckout:
             make_customer(), bookings_client=mock_bc, stripe_client=mock_sc
         )
 
-        with patch("app.routers.payments.payment_crud") as mock_crud:
+        with (
+            patch("app.routers.payments.payment_crud") as mock_crud,
+            patch("app.routers.payments.connect_crud.get_by_owner", AsyncMock(return_value=None)),
+        ):
             from app.schemas import PaymentResponse
 
             mock_crud.get_by_booking_paid = AsyncMock(return_value=None)
@@ -127,7 +130,10 @@ class TestCreateCheckout:
             make_admin(), bookings_client=mock_bc, stripe_client=mock_sc
         )
 
-        with patch("app.routers.payments.payment_crud") as mock_crud:
+        with (
+            patch("app.routers.payments.payment_crud") as mock_crud,
+            patch("app.routers.payments.connect_crud.get_by_owner", AsyncMock(return_value=None)),
+        ):
             from app.schemas import PaymentResponse
 
             mock_crud.get_by_booking_paid = AsyncMock(return_value=None)

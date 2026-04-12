@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import stripe
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.responses import RedirectResponse
 from stripe import StripeClient
 
 from app import settings
 from app.crud_connect import connect_crud
-from app.deps import CurrentUser, get_current_user, get_stripe_client, require_owner
+from app.deps import CurrentUser, get_stripe_client, require_owner
 from app.schemas import ConnectStatusResponse, OnboardResponse
 
 router = APIRouter(prefix="/payments/connect", tags=["stripe-connect"])
@@ -20,10 +18,16 @@ async def connect_status(
     """Return the Stripe Connect status for the authenticated owner."""
     account = await connect_crud.get_by_owner(current_user.id)
     if account is None:
-        return ConnectStatusResponse(connected=False, verified=False, stripe_account_id=None)
+        return ConnectStatusResponse(
+            connected=False,
+            verified=False,
+            charges_enabled=False,
+            stripe_account_id=None,
+        )
     return ConnectStatusResponse(
         connected=True,
         verified=account.verified,
+        charges_enabled=account.charges_enabled,
         stripe_account_id=account.stripe_account_id,
     )
 
@@ -31,63 +35,52 @@ async def connect_status(
 @router.post("/onboard", response_model=OnboardResponse)
 async def onboard_connect(
     current_user: CurrentUser = Depends(require_owner),
+    stripe_client: StripeClient = Depends(get_stripe_client),
 ) -> OnboardResponse:
-    """Generate the Stripe Connect OAuth URL for this owner."""
-    from urllib.parse import urlencode
+    """
+    Create (or resume) a Stripe Connect Account Links onboarding session.
 
-    params = urlencode(
-        {
-            "response_type": "code",
-            "client_id": settings.stripe_connect_client_id,
-            "scope": "read_write",
-            "redirect_uri": settings.stripe_connect_redirect_uri,
-            "state": str(current_user.id),
+    If the owner has no connected account yet, an Express account is created
+    first.  A one-time Account Link URL is always freshly generated so that
+    expired links can be refreshed by calling this endpoint again.
+    """
+    account = await connect_crud.get_by_owner(current_user.id)
+
+    if account is None:
+        stripe_account = stripe_client.v1.accounts.create(
+            params={"type": "express"}
+        )
+        stripe_account_id = stripe_account.id
+        await connect_crud.upsert(
+            current_user.id,
+            stripe_account_id,
+            verified=False,
+            charges_enabled=False,
+        )
+    else:
+        stripe_account_id = account.stripe_account_id
+
+    account_link = stripe_client.v1.account_links.create(
+        params={
+            "account": stripe_account_id,
+            "type": "account_onboarding",
+            "return_url": settings.stripe_connect_success_url,
+            "refresh_url": settings.stripe_connect_refresh_uri,
         }
     )
-    return OnboardResponse(redirect_url=f"https://connect.stripe.com/oauth/authorize?{params}")
-
-
-@router.get("/callback")
-async def connect_callback(
-    code: str,
-    state: str,
-    current_user: CurrentUser = Depends(get_current_user),
-    stripe_client: StripeClient = Depends(get_stripe_client),
-) -> RedirectResponse:
-    """
-    Stripe OAuth callback. Stripe redirects the owner's browser here after
-    they approve the Connect flow. The `state` param must match the
-    authenticated user's ID (CSRF protection).
-    """
-    if state != str(current_user.id):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid state parameter.",
-        )
-
-    oauth_response = stripe.OAuth.token(
-        code=code,
-        grant_type="authorization_code",
-        client_secret=settings.stripe_secret_key,
-    )
-    stripe_account_id: str = oauth_response.stripe_user_id
-
-    account = stripe_client.v1.accounts.retrieve(stripe_account_id)
-    verified = bool(account.details_submitted) and not account.requirements.disabled_reason
-
-    await connect_crud.upsert(current_user.id, stripe_account_id, verified=verified)
-
-    return RedirectResponse(url=settings.stripe_connect_success_url)
+    return OnboardResponse(redirect_url=account_link.url)
 
 
 @router.delete("", status_code=status.HTTP_204_NO_CONTENT)
 async def disconnect_connect(
     current_user: CurrentUser = Depends(require_owner),
+    stripe_client: StripeClient = Depends(get_stripe_client),
 ) -> None:
     """
-    Deauthorize and remove the owner's Stripe Connect account link.
-    The Stripe deauthorization call is best-effort — the local record
-    is deleted regardless of whether Stripe responds with an error.
+    Delete the owner's Stripe Express account and remove the local record.
+
+    The Stripe account deletion is best-effort — the local record is removed
+    regardless of whether Stripe responds with an error.
     """
     account = await connect_crud.get_by_owner(current_user.id)
     if account is None:
@@ -97,11 +90,7 @@ async def disconnect_connect(
         )
 
     try:
-        stripe.OAuth.deauthorize(
-            client_id=settings.stripe_connect_client_id,
-            stripe_user_id=account.stripe_account_id,
-            client_secret=settings.stripe_secret_key,
-        )
+        stripe_client.v1.accounts.delete(account.stripe_account_id)
     except Exception:
         pass  # Stripe failure must not block local cleanup
 

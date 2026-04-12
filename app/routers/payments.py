@@ -9,6 +9,7 @@ from stripe import StripeClient
 
 from app import settings
 from app.crud import payment_crud
+from app.crud_connect import connect_crud
 from app.deps import (
     BookingsClient,
     CurrentUser,
@@ -101,37 +102,51 @@ async def create_checkout(
     }
     product_name = _product_names.get(payload.locale or "", "Property booking")
 
-    session = stripe_client.v1.checkout.sessions.create(
-        params={
-            "mode": "payment",
-            "locale": cast(Literal["en", "bg", "auto"], locale),
-            "line_items": [
-                {
-                    "price_data": {
-                        "currency": currency,
-                        "product_data": {
-                            "name": product_name,
-                            "description": (
-                                f"Booking {str(payload.booking_id)[:8]}… "
-                                f"| {str(booking.get('start_datetime', ''))[:16]}"
-                            ),
-                        },
-                        "unit_amount": amount_cents,
-                    },
-                    "quantity": 1,
-                }
-            ],
-            # client_reference_id lets us look up the booking in the webhook
-            "client_reference_id": str(payload.booking_id),
-            "metadata": {
-                "booking_id": str(payload.booking_id),
-                "user_id": str(current_user.id),
-            },
-            "success_url": success_url,
-            "cancel_url": cancel_url,
-            "expires_at": int(expires_at.timestamp()),
+    # Route payment to the owner's connected Stripe account when available
+    owner_connect = await connect_crud.get_by_owner(UUID(booking["property_owner_id"]))
+    payment_intent_data: dict = {}
+    if owner_connect is not None and owner_connect.charges_enabled:
+        platform_fee_cents = int(
+            amount_cents * settings.stripe_platform_fee_percent / 100
+        )
+        payment_intent_data = {
+            "application_fee_amount": platform_fee_cents,
+            "transfer_data": {"destination": owner_connect.stripe_account_id},
         }
-    )
+
+    checkout_params: dict = {
+        "mode": "payment",
+        "locale": cast(Literal["en", "bg", "auto"], locale),
+        "line_items": [
+            {
+                "price_data": {
+                    "currency": currency,
+                    "product_data": {
+                        "name": product_name,
+                        "description": (
+                            f"Booking {str(payload.booking_id)[:8]}… "
+                            f"| {str(booking.get('start_datetime', ''))[:16]}"
+                        ),
+                    },
+                    "unit_amount": amount_cents,
+                },
+                "quantity": 1,
+            }
+        ],
+        # client_reference_id lets us look up the booking in the webhook
+        "client_reference_id": str(payload.booking_id),
+        "metadata": {
+            "booking_id": str(payload.booking_id),
+            "user_id": str(current_user.id),
+        },
+        "success_url": success_url,
+        "cancel_url": cancel_url,
+        "expires_at": int(expires_at.timestamp()),
+    }
+    if payment_intent_data:
+        checkout_params["payment_intent_data"] = payment_intent_data
+
+    session = stripe_client.v1.checkout.sessions.create(params=checkout_params)
 
     payment = await payment_crud.create(
         booking_id=payload.booking_id,
@@ -308,6 +323,8 @@ async def stripe_webhook(
         await _handle_session_expired(obj, bookings_client)
     elif event.type == "charge.refunded":
         await _handle_charge_refunded(obj)
+    elif event.type == "account.updated":
+        await _handle_account_updated(obj)
 
     return {"received": True}
 
@@ -348,6 +365,13 @@ async def _handle_charge_refunded(charge) -> None:  # type: ignore[type-arg]
     payment_intent_id = charge.payment_intent
     if payment_intent_id:
         await payment_crud.mark_refunded(payment_intent_id)
+
+
+async def _handle_account_updated(account) -> None:  # type: ignore[type-arg]
+    """Flip charges_enabled (and verified) when an owner finishes onboarding."""
+    await connect_crud.update_charges_enabled(
+        account.id, bool(account.charges_enabled)
+    )
 
 
 # ---------------------------------------------------------------------------

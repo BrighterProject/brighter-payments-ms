@@ -19,6 +19,7 @@ from .factories import make_property_owner, PROPERTY_OWNER_ID
 # ---------------------------------------------------------------------------
 
 STRIPE_ACCOUNT_ID = "acct_test_abc123"
+ACCOUNT_LINK_URL = "https://connect.stripe.com/setup/e/acct_test_abc123/abc"
 
 
 # ---------------------------------------------------------------------------
@@ -28,12 +29,18 @@ STRIPE_ACCOUNT_ID = "acct_test_abc123"
 
 def _noop_stripe_client():
     mock = MagicMock()
-    account_mock = MagicMock()
-    account_mock.details_submitted = True
-    account_mock.requirements = MagicMock()
-    account_mock.requirements.disabled_reason = None
     mock.v1 = MagicMock()
-    mock.v1.accounts.retrieve.return_value = account_mock
+
+    # accounts.create returns an object with .id
+    new_account_mock = MagicMock()
+    new_account_mock.id = STRIPE_ACCOUNT_ID
+    mock.v1.accounts.create.return_value = new_account_mock
+
+    # account_links.create returns an object with .url
+    link_mock = MagicMock()
+    link_mock.url = ACCOUNT_LINK_URL
+    mock.v1.account_links.create.return_value = link_mock
+
     return mock
 
 
@@ -60,13 +67,135 @@ def anon_app():
 
 
 # ---------------------------------------------------------------------------
-# ConnectCRUD unit tests (ORM mocked)
-# ---------------------------------------------------------------------------
-
-
-# ---------------------------------------------------------------------------
 # GET /payments/connect/status
 # ---------------------------------------------------------------------------
+
+
+def test_status_not_connected(owner_client):
+    with patch("app.routers.connect.connect_crud.get_by_owner", AsyncMock(return_value=None)):
+        resp = owner_client.get("/payments/connect/status")
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "connected": False,
+        "verified": False,
+        "charges_enabled": False,
+        "stripe_account_id": None,
+    }
+
+
+def test_status_connected_verified(owner_client):
+    from app.models import OwnerStripeAccount
+
+    mock_account = MagicMock(spec=OwnerStripeAccount)
+    mock_account.stripe_account_id = STRIPE_ACCOUNT_ID
+    mock_account.verified = True
+    mock_account.charges_enabled = True
+
+    with patch("app.routers.connect.connect_crud.get_by_owner", AsyncMock(return_value=mock_account)):
+        resp = owner_client.get("/payments/connect/status")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["connected"] is True
+    assert data["verified"] is True
+    assert data["charges_enabled"] is True
+    assert data["stripe_account_id"] == STRIPE_ACCOUNT_ID
+
+
+def test_status_connected_pending(owner_client):
+    from app.models import OwnerStripeAccount
+
+    mock_account = MagicMock(spec=OwnerStripeAccount)
+    mock_account.stripe_account_id = STRIPE_ACCOUNT_ID
+    mock_account.verified = False
+    mock_account.charges_enabled = False
+
+    with patch("app.routers.connect.connect_crud.get_by_owner", AsyncMock(return_value=mock_account)):
+        resp = owner_client.get("/payments/connect/status")
+
+    data = resp.json()
+    assert data["connected"] is True
+    assert data["verified"] is False
+    assert data["charges_enabled"] is False
+
+
+def test_status_requires_auth(anon_app):
+    client = TestClient(anon_app, raise_server_exceptions=False)
+    resp = client.get("/payments/connect/status")
+    assert resp.status_code == 422  # missing X-User-Id header
+
+
+# ---------------------------------------------------------------------------
+# POST /payments/connect/onboard
+# ---------------------------------------------------------------------------
+
+
+def test_onboard_creates_new_account_when_not_connected(owner_client):
+    """When the owner has no account, a new Express account is created and the link returned."""
+    with (
+        patch(
+            "app.routers.connect.connect_crud.get_by_owner",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.routers.connect.connect_crud.upsert",
+            AsyncMock(return_value=MagicMock()),
+        ),
+    ):
+        resp = owner_client.post("/payments/connect/onboard")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "redirect_url" in data
+    assert data["redirect_url"] == ACCOUNT_LINK_URL
+
+
+def test_onboard_reuses_existing_account_when_connected(owner_client):
+    """When the owner already has an account, no new account is created."""
+    from app.models import OwnerStripeAccount
+
+    existing = MagicMock(spec=OwnerStripeAccount)
+    existing.stripe_account_id = STRIPE_ACCOUNT_ID
+
+    sc = _noop_stripe_client()
+    client = TestClient(build_connect_app(make_property_owner(), stripe_client=sc), raise_server_exceptions=True)
+
+    with patch(
+        "app.routers.connect.connect_crud.get_by_owner",
+        AsyncMock(return_value=existing),
+    ):
+        resp = client.post("/payments/connect/onboard")
+
+    sc.v1.accounts.create.assert_not_called()
+    assert resp.status_code == 200
+    assert resp.json()["redirect_url"] == ACCOUNT_LINK_URL
+
+
+def test_onboard_account_link_uses_correct_type(owner_client):
+    """Account link must be of type account_onboarding."""
+    sc = _noop_stripe_client()
+    client = TestClient(build_connect_app(make_property_owner(), stripe_client=sc), raise_server_exceptions=True)
+
+    with (
+        patch(
+            "app.routers.connect.connect_crud.get_by_owner",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.routers.connect.connect_crud.upsert",
+            AsyncMock(return_value=MagicMock()),
+        ),
+    ):
+        client.post("/payments/connect/onboard")
+
+    call_params = sc.v1.account_links.create.call_args[1]["params"]
+    assert call_params["type"] == "account_onboarding"
+
+
+def test_onboard_requires_auth(anon_app):
+    client = TestClient(anon_app, raise_server_exceptions=False)
+    resp = client.post("/payments/connect/onboard")
+    assert resp.status_code == 422
 
 
 # ---------------------------------------------------------------------------
@@ -85,7 +214,6 @@ def test_disconnect_removes_account(owner_client):
             "app.routers.connect.connect_crud.get_by_owner",
             AsyncMock(return_value=mock_account),
         ),
-        patch("stripe.OAuth.deauthorize", return_value=None),
         patch(
             "app.routers.connect.connect_crud.delete_by_owner",
             AsyncMock(return_value=True),
@@ -105,24 +233,27 @@ def test_disconnect_404_when_not_connected(owner_client):
     assert resp.status_code == 404
 
 
-def test_disconnect_still_removes_if_stripe_deauth_fails(owner_client):
-    """Local DB record removed even if Stripe deauthorization raises."""
+def test_disconnect_still_removes_if_stripe_delete_fails(owner_client):
+    """Local DB record removed even if Stripe account deletion raises."""
     from app.models import OwnerStripeAccount
 
     mock_account = MagicMock(spec=OwnerStripeAccount)
     mock_account.stripe_account_id = STRIPE_ACCOUNT_ID
 
+    sc = _noop_stripe_client()
+    sc.v1.accounts.delete.side_effect = Exception("Stripe error")
+
     delete_mock = AsyncMock(return_value=True)
+    client = TestClient(build_connect_app(make_property_owner(), stripe_client=sc), raise_server_exceptions=True)
 
     with (
         patch(
             "app.routers.connect.connect_crud.get_by_owner",
             AsyncMock(return_value=mock_account),
         ),
-        patch("stripe.OAuth.deauthorize", side_effect=Exception("Stripe error")),
         patch("app.routers.connect.connect_crud.delete_by_owner", delete_mock),
     ):
-        resp = owner_client.delete("/payments/connect")
+        resp = client.delete("/payments/connect")
 
     assert resp.status_code == 204
     delete_mock.assert_called_once()
@@ -132,153 +263,6 @@ def test_disconnect_requires_auth(anon_app):
     client = TestClient(anon_app, raise_server_exceptions=False)
     resp = client.delete("/payments/connect")
     assert resp.status_code == 422
-
-
-# ---------------------------------------------------------------------------
-# GET /payments/connect/callback
-# ---------------------------------------------------------------------------
-
-
-def test_callback_stores_account_and_redirects(owner_client):
-    mock_oauth_resp = MagicMock()
-    mock_oauth_resp.stripe_user_id = STRIPE_ACCOUNT_ID
-
-    with (
-        patch("stripe.OAuth.token", return_value=mock_oauth_resp),
-        patch(
-            "app.routers.connect.connect_crud.upsert",
-            AsyncMock(return_value=MagicMock()),
-        ),
-    ):
-        resp = owner_client.get(
-            "/payments/connect/callback",
-            params={"code": "ac_test_code", "state": str(PROPERTY_OWNER_ID)},
-            follow_redirects=False,
-        )
-
-    assert resp.status_code == 307
-    assert "/admin/settings/payments" in resp.headers["location"]
-
-
-def test_callback_rejects_mismatched_state(owner_client):
-    resp = owner_client.get(
-        "/payments/connect/callback",
-        params={"code": "ac_test_code", "state": str(uuid4())},
-        follow_redirects=False,
-    )
-    assert resp.status_code == 400
-
-
-def test_callback_sets_verified_from_stripe_account(owner_client):
-    """verified=True when account.details_submitted=True and no disabled_reason."""
-    mock_oauth_resp = MagicMock()
-    mock_oauth_resp.stripe_user_id = STRIPE_ACCOUNT_ID
-
-    upsert_mock = AsyncMock(return_value=MagicMock())
-
-    with (
-        patch("stripe.OAuth.token", return_value=mock_oauth_resp),
-        patch("app.routers.connect.connect_crud.upsert", upsert_mock),
-    ):
-        owner_client.get(
-            "/payments/connect/callback",
-            params={"code": "ac_test_code", "state": str(PROPERTY_OWNER_ID)},
-            follow_redirects=False,
-        )
-
-    # _noop_stripe_client has details_submitted=True and no disabled_reason
-    _, kwargs = upsert_mock.call_args
-    assert kwargs["verified"] is True
-
-
-def test_callback_requires_auth(anon_app):
-    client = TestClient(anon_app, raise_server_exceptions=False)
-    resp = client.get(
-        "/payments/connect/callback",
-        params={"code": "ac_test_code", "state": str(uuid4())},
-    )
-    assert resp.status_code == 422
-
-
-# ---------------------------------------------------------------------------
-# POST /payments/connect/onboard
-# ---------------------------------------------------------------------------
-
-
-def test_onboard_returns_redirect_url(owner_client):
-    resp = owner_client.post("/payments/connect/onboard")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert "redirect_url" in data
-    assert "connect.stripe.com/oauth/authorize" in data["redirect_url"]
-
-
-def test_onboard_url_encodes_owner_state(owner_client):
-    resp = owner_client.post("/payments/connect/onboard")
-    data = resp.json()
-    assert str(PROPERTY_OWNER_ID) in data["redirect_url"]
-
-
-def test_onboard_url_contains_client_id(owner_client):
-    resp = owner_client.post("/payments/connect/onboard")
-    data = resp.json()
-    assert "client_id=" in data["redirect_url"]
-
-
-def test_onboard_requires_auth(anon_app):
-    client = TestClient(anon_app, raise_server_exceptions=False)
-    resp = client.post("/payments/connect/onboard")
-    assert resp.status_code == 422
-
-
-# ---------------------------------------------------------------------------
-# GET /payments/connect/status
-# ---------------------------------------------------------------------------
-
-
-def test_status_not_connected(owner_client):
-    with patch("app.routers.connect.connect_crud.get_by_owner", AsyncMock(return_value=None)):
-        resp = owner_client.get("/payments/connect/status")
-    assert resp.status_code == 200
-    assert resp.json() == {"connected": False, "verified": False, "stripe_account_id": None}
-
-
-def test_status_connected_verified(owner_client):
-    from app.models import OwnerStripeAccount
-
-    mock_account = MagicMock(spec=OwnerStripeAccount)
-    mock_account.stripe_account_id = STRIPE_ACCOUNT_ID
-    mock_account.verified = True
-
-    with patch("app.routers.connect.connect_crud.get_by_owner", AsyncMock(return_value=mock_account)):
-        resp = owner_client.get("/payments/connect/status")
-
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["connected"] is True
-    assert data["verified"] is True
-    assert data["stripe_account_id"] == STRIPE_ACCOUNT_ID
-
-
-def test_status_connected_pending(owner_client):
-    from app.models import OwnerStripeAccount
-
-    mock_account = MagicMock(spec=OwnerStripeAccount)
-    mock_account.stripe_account_id = STRIPE_ACCOUNT_ID
-    mock_account.verified = False
-
-    with patch("app.routers.connect.connect_crud.get_by_owner", AsyncMock(return_value=mock_account)):
-        resp = owner_client.get("/payments/connect/status")
-
-    data = resp.json()
-    assert data["connected"] is True
-    assert data["verified"] is False
-
-
-def test_status_requires_auth(anon_app):
-    client = TestClient(anon_app, raise_server_exceptions=False)
-    resp = client.get("/payments/connect/status")
-    assert resp.status_code == 422  # missing X-User-Id header
 
 
 # ---------------------------------------------------------------------------
@@ -318,13 +302,16 @@ async def test_crud_upsert_creates_when_not_exists():
 
     mock_inst = MagicMock(spec=OwnerStripeAccount)
     mock_inst.stripe_account_id = STRIPE_ACCOUNT_ID
-    mock_inst.verified = True
+    mock_inst.verified = False
+    mock_inst.charges_enabled = False
 
     with (
         patch.object(OwnerStripeAccount, "get_or_none", AsyncMock(return_value=None)),
         patch.object(OwnerStripeAccount, "create", AsyncMock(return_value=mock_inst)),
     ):
-        result = await ConnectCRUD().upsert(PROPERTY_OWNER_ID, STRIPE_ACCOUNT_ID, verified=True)
+        result = await ConnectCRUD().upsert(
+            PROPERTY_OWNER_ID, STRIPE_ACCOUNT_ID, verified=False, charges_enabled=False
+        )
 
     assert result.stripe_account_id == STRIPE_ACCOUNT_ID
 
@@ -339,11 +326,28 @@ async def test_crud_upsert_updates_when_exists():
     existing.stripe_account_id = "acct_old"
 
     with patch.object(OwnerStripeAccount, "get_or_none", AsyncMock(return_value=existing)):
-        await ConnectCRUD().upsert(PROPERTY_OWNER_ID, STRIPE_ACCOUNT_ID, verified=True)
+        await ConnectCRUD().upsert(
+            PROPERTY_OWNER_ID, STRIPE_ACCOUNT_ID, verified=True, charges_enabled=True
+        )
 
     assert existing.stripe_account_id == STRIPE_ACCOUNT_ID
     assert existing.verified is True
+    assert existing.charges_enabled is True
     existing.save.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_crud_update_charges_enabled():
+    from app.crud_connect import ConnectCRUD
+    from app.models import OwnerStripeAccount
+
+    mock_qs = MagicMock()
+    mock_qs.update = AsyncMock(return_value=1)
+
+    with patch.object(OwnerStripeAccount, "filter", return_value=mock_qs):
+        await ConnectCRUD().update_charges_enabled(STRIPE_ACCOUNT_ID, charges_enabled=True)
+
+    mock_qs.update.assert_called_once_with(charges_enabled=True, verified=True)
 
 
 @pytest.mark.asyncio
@@ -358,6 +362,20 @@ async def test_crud_delete_returns_true_on_success():
         result = await ConnectCRUD().delete_by_owner(PROPERTY_OWNER_ID)
 
     assert result is True
+
+
+@pytest.mark.asyncio
+async def test_crud_delete_returns_false_when_not_found():
+    from app.crud_connect import ConnectCRUD
+    from app.models import OwnerStripeAccount
+
+    mock_qs = MagicMock()
+    mock_qs.delete = AsyncMock(return_value=0)
+
+    with patch.object(OwnerStripeAccount, "filter", return_value=mock_qs):
+        result = await ConnectCRUD().delete_by_owner(PROPERTY_OWNER_ID)
+
+    assert result is False
 
 
 # ---------------------------------------------------------------------------
@@ -389,17 +407,3 @@ def test_require_owner_allows_admin():
     admin = CurrentUser(id=uuid4(), username="admin", scopes=["admin:scopes"])
     result = require_owner(current_user=admin)
     assert result is admin
-
-
-@pytest.mark.asyncio
-async def test_crud_delete_returns_false_when_not_found():
-    from app.crud_connect import ConnectCRUD
-    from app.models import OwnerStripeAccount
-
-    mock_qs = MagicMock()
-    mock_qs.delete = AsyncMock(return_value=0)
-
-    with patch.object(OwnerStripeAccount, "filter", return_value=mock_qs):
-        result = await ConnectCRUD().delete_by_owner(PROPERTY_OWNER_ID)
-
-    assert result is False
