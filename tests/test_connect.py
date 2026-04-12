@@ -138,6 +138,37 @@ async def test_crud_delete_returns_true_on_success():
     assert result is True
 
 
+# ---------------------------------------------------------------------------
+# require_owner unit tests
+# ---------------------------------------------------------------------------
+
+
+def test_require_owner_blocks_regular_user():
+    from app.deps import CurrentUser, require_owner
+    from fastapi import HTTPException
+
+    user = CurrentUser(id=uuid4(), username="user", scopes=["payments:read"])
+    with pytest.raises(HTTPException) as exc_info:
+        require_owner(current_user=user)
+    assert exc_info.value.status_code == 403
+
+
+def test_require_owner_allows_owner():
+    from app.deps import CurrentUser, require_owner
+
+    owner = CurrentUser(id=uuid4(), username="owner", scopes=["bookings:manage"])
+    result = require_owner(current_user=owner)
+    assert result is owner
+
+
+def test_require_owner_allows_admin():
+    from app.deps import CurrentUser, require_owner
+
+    admin = CurrentUser(id=uuid4(), username="admin", scopes=["admin:scopes"])
+    result = require_owner(current_user=admin)
+    assert result is admin
+
+
 @pytest.mark.asyncio
 async def test_crud_delete_returns_false_when_not_found():
     from app.crud_connect import ConnectCRUD
