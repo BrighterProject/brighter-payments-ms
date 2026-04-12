@@ -64,6 +64,61 @@ def anon_app():
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# GET /payments/connect/status
+# ---------------------------------------------------------------------------
+
+
+def test_status_not_connected(owner_client):
+    with patch("app.routers.connect.connect_crud.get_by_owner", AsyncMock(return_value=None)):
+        resp = owner_client.get("/payments/connect/status")
+    assert resp.status_code == 200
+    assert resp.json() == {"connected": False, "verified": False, "stripe_account_id": None}
+
+
+def test_status_connected_verified(owner_client):
+    from app.models import OwnerStripeAccount
+
+    mock_account = MagicMock(spec=OwnerStripeAccount)
+    mock_account.stripe_account_id = STRIPE_ACCOUNT_ID
+    mock_account.verified = True
+
+    with patch("app.routers.connect.connect_crud.get_by_owner", AsyncMock(return_value=mock_account)):
+        resp = owner_client.get("/payments/connect/status")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["connected"] is True
+    assert data["verified"] is True
+    assert data["stripe_account_id"] == STRIPE_ACCOUNT_ID
+
+
+def test_status_connected_pending(owner_client):
+    from app.models import OwnerStripeAccount
+
+    mock_account = MagicMock(spec=OwnerStripeAccount)
+    mock_account.stripe_account_id = STRIPE_ACCOUNT_ID
+    mock_account.verified = False
+
+    with patch("app.routers.connect.connect_crud.get_by_owner", AsyncMock(return_value=mock_account)):
+        resp = owner_client.get("/payments/connect/status")
+
+    data = resp.json()
+    assert data["connected"] is True
+    assert data["verified"] is False
+
+
+def test_status_requires_auth(anon_app):
+    client = TestClient(anon_app, raise_server_exceptions=False)
+    resp = client.get("/payments/connect/status")
+    assert resp.status_code == 422  # missing X-User-Id header
+
+
+# ---------------------------------------------------------------------------
+# ConnectCRUD unit tests (ORM mocked)
+# ---------------------------------------------------------------------------
+
+
 @pytest.mark.asyncio
 async def test_crud_get_by_owner_returns_none_when_missing():
     from app.crud_connect import ConnectCRUD
