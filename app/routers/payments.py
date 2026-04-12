@@ -323,8 +323,6 @@ async def stripe_webhook(
         await _handle_session_expired(obj, bookings_client)
     elif event.type == "charge.refunded":
         await _handle_charge_refunded(obj)
-    elif event.type == "account.updated":
-        await _handle_account_updated(obj)
 
     return {"received": True}
 
@@ -365,13 +363,6 @@ async def _handle_charge_refunded(charge) -> None:  # type: ignore[type-arg]
     payment_intent_id = charge.payment_intent
     if payment_intent_id:
         await payment_crud.mark_refunded(payment_intent_id)
-
-
-async def _handle_account_updated(account) -> None:  # type: ignore[type-arg]
-    """Flip charges_enabled (and verified) when an owner finishes onboarding."""
-    await connect_crud.update_charges_enabled(
-        account.id, bool(account.charges_enabled)
-    )
 
 
 # ---------------------------------------------------------------------------

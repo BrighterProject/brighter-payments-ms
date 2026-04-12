@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+import stripe
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from stripe import StripeClient
 
 from app import settings
@@ -29,6 +30,7 @@ async def connect_status(
         verified=account.verified,
         charges_enabled=account.charges_enabled,
         stripe_account_id=account.stripe_account_id,
+        requirements_outstanding=account.requirements_outstanding,
     )
 
 
@@ -95,3 +97,68 @@ async def disconnect_connect(
         pass  # Stripe failure must not block local cleanup
 
     await connect_crud.delete_by_owner(current_user.id)
+
+
+# ---------------------------------------------------------------------------
+# POST /payments/connect/webhook  (PUBLIC — separate Stripe Connect destination)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/webhook")
+async def connect_webhook(
+    request: Request,
+    stripe_client: StripeClient = Depends(get_stripe_client),
+) -> dict:
+    """
+    Webhook endpoint for the Stripe Connect / V2 event destination.
+
+    This endpoint uses a *separate* signing secret from the standard payments
+    webhook so that Connect events are verified against the correct destination.
+
+    Handles:
+      - v2.core.account.updated          — sync charges_enabled / verified flag
+      - v2.core.account[requirements].updated — flag owners with outstanding
+                                               requirements (expired ID, tax info, etc.)
+
+    Security:
+      - Must be declared PUBLIC in Traefik (no forwardAuth), same as /payments/webhook.
+      - Verification is via parse_thin_event HMAC before any DB writes.
+      - Raw request bytes are used for verification — never the parsed body.
+    """
+    raw_body = await request.body()
+    sig_header = request.headers.get("Stripe-Signature", "")
+
+    try:
+        thin_event = stripe_client.parse_thin_event(
+            raw_body, sig_header, settings.stripe_connect_webhook_secret
+        )
+    except stripe.SignatureVerificationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid Stripe signature.",
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid webhook payload.",
+        ) from exc
+
+    account_id: str | None = (
+        thin_event.related_object.id if thin_event.related_object else None
+    )
+
+    if thin_event.type == "v2.core.account.updated" and account_id:
+        # Fetch current account state and update charges_enabled / verified.
+        account = stripe_client.v1.accounts.retrieve(account_id)
+        await connect_crud.update_charges_enabled(account_id, bool(account.charges_enabled))
+
+    elif thin_event.type == "v2.core.account[requirements].updated" and account_id:
+        # Retrieve the account to inspect its requirements.
+        account = stripe_client.v1.accounts.retrieve(account_id)
+        reqs = account.requirements
+        has_requirements = bool(
+            (reqs and reqs.currently_due) or (reqs and reqs.past_due)
+        )
+        await connect_crud.update_requirements(account_id, has_requirements)
+
+    return {"received": True}

@@ -34,10 +34,22 @@ class ConnectCRUD:
     async def update_charges_enabled(
         self, stripe_account_id: str, charges_enabled: bool
     ) -> None:
-        """Called by the account.updated webhook to flip charges_enabled and verified."""
+        """Called by the v2.core.account.updated webhook to flip charges_enabled and verified."""
         await OwnerStripeAccount.filter(stripe_account_id=stripe_account_id).update(
             charges_enabled=charges_enabled,
             verified=charges_enabled,
+        )
+
+    async def update_requirements(
+        self, stripe_account_id: str, has_requirements: bool
+    ) -> None:
+        """Called by the v2.core.account[requirements].updated webhook.
+
+        Flags owners who have outstanding requirements (expired ID, missing tax info, etc.)
+        so the frontend can prompt them to update their information.
+        """
+        await OwnerStripeAccount.filter(stripe_account_id=stripe_account_id).update(
+            requirements_outstanding=has_requirements,
         )
 
     async def delete_by_owner(self, owner_id: UUID) -> bool:

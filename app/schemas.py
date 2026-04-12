@@ -52,3 +52,4 @@ class ConnectStatusResponse(BaseModel):
     verified: bool
     charges_enabled: bool
     stripe_account_id: str | None
+    requirements_outstanding: bool = False
