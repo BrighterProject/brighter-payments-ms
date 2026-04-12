@@ -69,6 +69,42 @@ def anon_app():
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# POST /payments/connect/onboard
+# ---------------------------------------------------------------------------
+
+
+def test_onboard_returns_redirect_url(owner_client):
+    resp = owner_client.post("/payments/connect/onboard")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "redirect_url" in data
+    assert "connect.stripe.com/oauth/authorize" in data["redirect_url"]
+
+
+def test_onboard_url_encodes_owner_state(owner_client):
+    resp = owner_client.post("/payments/connect/onboard")
+    data = resp.json()
+    assert str(PROPERTY_OWNER_ID) in data["redirect_url"]
+
+
+def test_onboard_url_contains_client_id(owner_client):
+    resp = owner_client.post("/payments/connect/onboard")
+    data = resp.json()
+    assert "client_id=" in data["redirect_url"]
+
+
+def test_onboard_requires_auth(anon_app):
+    client = TestClient(anon_app, raise_server_exceptions=False)
+    resp = client.post("/payments/connect/onboard")
+    assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# GET /payments/connect/status
+# ---------------------------------------------------------------------------
+
+
 def test_status_not_connected(owner_client):
     with patch("app.routers.connect.connect_crud.get_by_owner", AsyncMock(return_value=None)):
         resp = owner_client.get("/payments/connect/status")

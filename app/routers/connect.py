@@ -26,3 +26,22 @@ async def connect_status(
         verified=account.verified,
         stripe_account_id=account.stripe_account_id,
     )
+
+
+@router.post("/onboard", response_model=OnboardResponse)
+async def onboard_connect(
+    current_user: CurrentUser = Depends(require_owner),
+) -> OnboardResponse:
+    """Generate the Stripe Connect OAuth URL for this owner."""
+    from urllib.parse import urlencode
+
+    params = urlencode(
+        {
+            "response_type": "code",
+            "client_id": settings.stripe_connect_client_id,
+            "scope": "read_write",
+            "redirect_uri": settings.stripe_connect_redirect_uri,
+            "state": str(current_user.id),
+        }
+    )
+    return OnboardResponse(redirect_url=f"https://connect.stripe.com/oauth/authorize?{params}")
