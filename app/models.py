@@ -33,3 +33,13 @@ class Payment(Model):
     class Meta:  # type: ignore
         table = "payments"
         ordering = ["-created_at"]
+
+
+class OwnerStripeAccount(Model):
+    id = fields.UUIDField(primary_key=True)
+    owner_id = fields.UUIDField(unique=True)
+    stripe_account_id = fields.CharField(max_length=255, unique=True)
+    verified = fields.BooleanField(default=False)
+
+    class Meta:  # type: ignore
+        table = "owner_stripe_accounts"

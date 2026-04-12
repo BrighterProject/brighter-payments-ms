@@ -41,3 +41,13 @@ class CheckoutResponse(BaseModel):
     checkout_url: str
     session_id: str
     payment_id: UUID
+
+
+class OnboardResponse(BaseModel):
+    redirect_url: str
+
+
+class ConnectStatusResponse(BaseModel):
+    connected: bool
+    verified: bool
+    stripe_account_id: str | None
