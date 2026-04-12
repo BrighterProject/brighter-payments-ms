@@ -78,3 +78,31 @@ async def connect_callback(
     await connect_crud.upsert(current_user.id, stripe_account_id, verified=verified)
 
     return RedirectResponse(url=settings.stripe_connect_success_url)
+
+
+@router.delete("", status_code=status.HTTP_204_NO_CONTENT)
+async def disconnect_connect(
+    current_user: CurrentUser = Depends(require_owner),
+) -> None:
+    """
+    Deauthorize and remove the owner's Stripe Connect account link.
+    The Stripe deauthorization call is best-effort — the local record
+    is deleted regardless of whether Stripe responds with an error.
+    """
+    account = await connect_crud.get_by_owner(current_user.id)
+    if account is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No connected Stripe account found.",
+        )
+
+    try:
+        stripe.OAuth.deauthorize(
+            client_id=settings.stripe_connect_client_id,
+            stripe_user_id=account.stripe_account_id,
+            client_secret=settings.stripe_secret_key,
+        )
+    except Exception:
+        pass  # Stripe failure must not block local cleanup
+
+    await connect_crud.delete_by_owner(current_user.id)

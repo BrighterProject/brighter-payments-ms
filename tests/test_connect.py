@@ -70,6 +70,71 @@ def anon_app():
 
 
 # ---------------------------------------------------------------------------
+# DELETE /payments/connect
+# ---------------------------------------------------------------------------
+
+
+def test_disconnect_removes_account(owner_client):
+    from app.models import OwnerStripeAccount
+
+    mock_account = MagicMock(spec=OwnerStripeAccount)
+    mock_account.stripe_account_id = STRIPE_ACCOUNT_ID
+
+    with (
+        patch(
+            "app.routers.connect.connect_crud.get_by_owner",
+            AsyncMock(return_value=mock_account),
+        ),
+        patch("stripe.OAuth.deauthorize", return_value=None),
+        patch(
+            "app.routers.connect.connect_crud.delete_by_owner",
+            AsyncMock(return_value=True),
+        ),
+    ):
+        resp = owner_client.delete("/payments/connect")
+
+    assert resp.status_code == 204
+
+
+def test_disconnect_404_when_not_connected(owner_client):
+    with patch(
+        "app.routers.connect.connect_crud.get_by_owner",
+        AsyncMock(return_value=None),
+    ):
+        resp = owner_client.delete("/payments/connect")
+    assert resp.status_code == 404
+
+
+def test_disconnect_still_removes_if_stripe_deauth_fails(owner_client):
+    """Local DB record removed even if Stripe deauthorization raises."""
+    from app.models import OwnerStripeAccount
+
+    mock_account = MagicMock(spec=OwnerStripeAccount)
+    mock_account.stripe_account_id = STRIPE_ACCOUNT_ID
+
+    delete_mock = AsyncMock(return_value=True)
+
+    with (
+        patch(
+            "app.routers.connect.connect_crud.get_by_owner",
+            AsyncMock(return_value=mock_account),
+        ),
+        patch("stripe.OAuth.deauthorize", side_effect=Exception("Stripe error")),
+        patch("app.routers.connect.connect_crud.delete_by_owner", delete_mock),
+    ):
+        resp = owner_client.delete("/payments/connect")
+
+    assert resp.status_code == 204
+    delete_mock.assert_called_once()
+
+
+def test_disconnect_requires_auth(anon_app):
+    client = TestClient(anon_app, raise_server_exceptions=False)
+    resp = client.delete("/payments/connect")
+    assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
 # GET /payments/connect/callback
 # ---------------------------------------------------------------------------
 
