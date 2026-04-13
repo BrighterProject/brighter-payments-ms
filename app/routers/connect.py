@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import contextlib
+from typing import Any
+
 import stripe
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from stripe import StripeClient
@@ -10,6 +13,42 @@ from app.deps import CurrentUser, get_stripe_client, require_owner
 from app.schemas import ConnectStatusResponse, OnboardResponse
 
 router = APIRouter(prefix="/payments/connect", tags=["stripe-connect"])
+
+
+def _has_outstanding_requirements(requirements: Any) -> bool:
+    """
+    Best-effort v2 requirements check.
+
+    In Accounts v2, requirements are exposed as entries with per-entry deadlines.
+    We treat the account as having outstanding requirements when any entry is
+    currently_due or past_due.
+    """
+    if requirements is None:
+        return False
+
+    entries = getattr(requirements, "entries", None) or []
+    for entry in entries:
+        minimum_deadline = getattr(entry, "minimum_deadline", None)
+        status_value = getattr(minimum_deadline, "status", None)
+        if status_value in {"currently_due", "past_due"}:
+            return True
+
+    summary = getattr(requirements, "summary", None)
+    minimum_deadline = getattr(summary, "minimum_deadline", None)
+    return getattr(minimum_deadline, "status", None) in {"currently_due", "past_due"}
+
+
+def _merchant_card_payments_active(account: Any) -> bool:
+    """
+    Merchant capability status in Accounts v2.
+
+    The v2 merchant configuration exposes capability status directly.
+    """
+    configuration = getattr(account, "configuration", None)
+    merchant = getattr(configuration, "merchant", None)
+    capabilities = getattr(merchant, "capabilities", None)
+    card_payments = getattr(capabilities, "card_payments", None)
+    return getattr(card_payments, "status", None) == "active"
 
 
 @router.get("/status", response_model=ConnectStatusResponse)
@@ -25,6 +64,7 @@ async def connect_status(
             charges_enabled=False,
             stripe_account_id=None,
         )
+
     return ConnectStatusResponse(
         connected=True,
         verified=account.verified,
@@ -40,16 +80,24 @@ async def onboard_connect(
     stripe_client: StripeClient = Depends(get_stripe_client),
 ) -> OnboardResponse:
     """
-    Create (or resume) a Stripe Connect Account Links onboarding session.
+    Create (or resume) a Stripe Connect onboarding session using Accounts v2.
 
-    If the owner has no connected account yet, an Express account is created
-    first.  A one-time Account Link URL is always freshly generated so that
-    expired links can be refreshed by calling this endpoint again.
+    If the owner has no connected account yet, create an Accounts v2 merchant
+    account first. A fresh Account Link URL is generated every time.
     """
     account = await connect_crud.get_by_owner(current_user.id)
 
     if account is None:
-        stripe_account = stripe_client.v1.accounts.create(params={"type": "express"})
+        stripe_account = stripe_client.v2.core.accounts.create(
+            {
+                "configuration": {
+                    "merchant": {
+                        "capabilities": {"card_payments": {"requested": True}},
+                    }
+                },
+                "dashboard": "express",
+            }
+        )
         stripe_account_id = stripe_account.id
         await connect_crud.upsert(
             current_user.id,
@@ -60,12 +108,17 @@ async def onboard_connect(
     else:
         stripe_account_id = account.stripe_account_id
 
-    account_link = stripe_client.v1.account_links.create(
-        params={
+    account_link = stripe_client.v2.core.account_links.create(
+        {
             "account": stripe_account_id,
-            "type": "account_onboarding",
-            "return_url": settings.stripe_connect_success_url,
-            "refresh_url": settings.stripe_connect_refresh_uri,
+            "use_case": {
+                "type": "account_onboarding",
+                "account_onboarding": {
+                    "return_url": settings.stripe_connect_success_url,
+                    "refresh_url": settings.stripe_connect_refresh_uri,
+                    "configurations": ["merchant"],
+                },
+            },
         }
     )
     return OnboardResponse(redirect_url=account_link.url)
@@ -77,10 +130,9 @@ async def disconnect_connect(
     stripe_client: StripeClient = Depends(get_stripe_client),
 ) -> None:
     """
-    Delete the owner's Stripe Express account and remove the local record.
+    Close the owner's Stripe v2 account and remove the local record.
 
-    The Stripe account deletion is best-effort — the local record is removed
-    regardless of whether Stripe responds with an error.
+    The Stripe operation is best-effort — local cleanup always happens.
     """
     account = await connect_crud.get_by_owner(current_user.id)
     if account is None:
@@ -89,10 +141,8 @@ async def disconnect_connect(
             detail="No connected Stripe account found.",
         )
 
-    try:
-        stripe_client.v1.accounts.delete(account.stripe_account_id)
-    except Exception:
-        pass  # Stripe failure must not block local cleanup
+    with contextlib.suppress(Exception):
+        stripe_client.v2.core.accounts.close(account.stripe_account_id)
 
     await connect_crud.delete_by_owner(current_user.id)
 
@@ -108,20 +158,13 @@ async def connect_webhook(
     stripe_client: StripeClient = Depends(get_stripe_client),
 ) -> dict:
     """
-    Webhook endpoint for the Stripe Connect / V2 event destination.
-
-    This endpoint uses a *separate* signing secret from the standard payments
-    webhook so that Connect events are verified against the correct destination.
+    Webhook endpoint for the Stripe Connect / v2 event destination.
 
     Handles:
-      - v2.core.account.updated          — sync charges_enabled / verified flag
-      - v2.core.account[requirements].updated — flag owners with outstanding
-                                               requirements (expired ID, tax info, etc.)
+      - v2.core.account.updated
+      - v2.core.account[requirements].updated
 
-    Security:
-      - Must be declared PUBLIC in Traefik (no forwardAuth), same as /payments/webhook.
-      - Verification is via parse_thin_event HMAC before any DB writes.
-      - Raw request bytes are used for verification — never the parsed body.
+    Uses parse_event_notification HMAC verification before any DB writes.
     """
     raw_body = await request.body()
     sig_header = request.headers.get("Stripe-Signature", "")
@@ -141,25 +184,26 @@ async def connect_webhook(
             detail="Invalid webhook payload.",
         ) from exc
 
-    print(thin_event.type.startswith("v2.core.account"), thin_event.type)
+    if thin_event.type in {
+        "v2.core.account.updated",
+        "v2.core.account[requirements].updated",
+    }:
+        account_id: str = thin_event.related_object.id  # type: ignore[assignment]
 
-    if thin_event.type.startswith("v2.core.account"):
-        account_id: str = thin_event.related_object.id  # type: ignore
+        # Fetch the latest account state so we always sync from Stripe's source
+        # of truth. v2 retrieval supports include for requirement and
+        # configuration fields.
+        account = stripe_client.v2.core.accounts.retrieve(
+            account_id,
+            params={"include": ["requirements", "configuration.merchant"]},
+        )
 
-        if thin_event.type == "v2.core.account.updated":
-            # Fetch current account state and update charges_enabled / verified.
-            account = stripe_client.v1.accounts.retrieve(account_id)
-            await connect_crud.update_charges_enabled(
-                account_id, bool(account.charges_enabled)
-            )
+        charges_enabled = _merchant_card_payments_active(account)
+        requirements_outstanding = _has_outstanding_requirements(
+            getattr(account, "requirements", None)
+        )
 
-        elif thin_event.type == "v2.core.account[requirements].updated":
-            # Retrieve the account to inspect its requirements.
-            account = stripe_client.v1.accounts.retrieve(account_id)
-            reqs = account.requirements
-            has_requirements = bool(
-                (reqs and reqs.currently_due) or (reqs and reqs.past_due)
-            )
-            await connect_crud.update_requirements(account_id, has_requirements)
+        await connect_crud.update_charges_enabled(account_id, charges_enabled)
+        await connect_crud.update_requirements(account_id, requirements_outstanding)
 
     return {"received": True}
