@@ -47,9 +47,14 @@ class OnboardResponse(BaseModel):
     redirect_url: str
 
 
+class UpdateResponse(BaseModel):
+    redirect_url: str
+
+
 class ConnectStatusResponse(BaseModel):
     connected: bool
     verified: bool
     charges_enabled: bool
     stripe_account_id: str | None
     requirements_outstanding: bool = False
+    requirements_eventually_due: bool = False

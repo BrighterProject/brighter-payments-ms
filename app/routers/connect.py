@@ -1,41 +1,52 @@
 from __future__ import annotations
 
 import contextlib
-from typing import Any
+from typing import Any, Literal
 
 import stripe
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from pydantic_extra_types.country import CountryAlpha2
+from starlette.responses import RedirectResponse
 from stripe import StripeClient
 
 from app import settings
 from app.crud_connect import connect_crud
 from app.deps import CurrentUser, get_stripe_client, require_owner
-from app.schemas import ConnectStatusResponse, OnboardResponse
+from app.schemas import ConnectStatusResponse, OnboardResponse, UpdateResponse
 
 router = APIRouter(prefix="/payments/connect", tags=["stripe-connect"])
 
 
-def _has_outstanding_requirements(requirements: Any) -> bool:
+def _requirements_summary(requirements: Any) -> tuple[bool, bool]:
     """
-    Best-effort v2 requirements check.
-
-    In Accounts v2, requirements are exposed as entries with per-entry deadlines.
-    We treat the account as having outstanding requirements when any entry is
-    currently_due or past_due.
+    Returns (has_currently_or_past_due, has_eventually_due).
+    Scans v2 requirements entries by minimum_deadline.status.
     """
     if requirements is None:
-        return False
+        return False, False
+
+    currently_due = False
+    eventually_due = False
 
     entries = getattr(requirements, "entries", None) or []
     for entry in entries:
         minimum_deadline = getattr(entry, "minimum_deadline", None)
         status_value = getattr(minimum_deadline, "status", None)
         if status_value in {"currently_due", "past_due"}:
-            return True
+            currently_due = True
+        elif status_value == "eventually_due":
+            eventually_due = True
 
+    # Also check the summary for a quick short-circuit
     summary = getattr(requirements, "summary", None)
     minimum_deadline = getattr(summary, "minimum_deadline", None)
-    return getattr(minimum_deadline, "status", None) in {"currently_due", "past_due"}
+    summary_status = getattr(minimum_deadline, "status", None)
+    if summary_status in {"currently_due", "past_due"}:
+        currently_due = True
+    elif summary_status == "eventually_due":
+        eventually_due = True
+
+    return currently_due, eventually_due
 
 
 def _merchant_card_payments_active(account: Any) -> bool:
@@ -71,6 +82,7 @@ async def connect_status(
         charges_enabled=account.charges_enabled,
         stripe_account_id=account.stripe_account_id,
         requirements_outstanding=account.requirements_outstanding,
+        requirements_eventually_due=account.requirements_eventually_due,
     )
 
 
@@ -78,6 +90,11 @@ async def connect_status(
 async def onboard_connect(
     current_user: CurrentUser = Depends(require_owner),
     stripe_client: StripeClient = Depends(get_stripe_client),
+    entity_type: Literal[
+        "company", "government_entity", "individual", "non_profit"
+    ] = "individual",
+    country: CountryAlpha2 = CountryAlpha2("BG"),
+    upfront: bool = False,  # whether to collect eventually_due
 ) -> OnboardResponse:
     """
     Create (or resume) a Stripe Connect onboarding session using Accounts v2.
@@ -86,14 +103,31 @@ async def onboard_connect(
     account first. A fresh Account Link URL is generated every time.
     """
     account = await connect_crud.get_by_owner(current_user.id)
-
     if account is None:
         stripe_account = stripe_client.v2.core.accounts.create(
             {
+                "identity": {
+                    "country": country,
+                    "entity_type": entity_type,
+                },
+                "defaults": {
+                    "responsibilities": {
+                        "fees_collector": "application",
+                        "losses_collector": "application",
+                    }
+                },
                 "configuration": {
                     "merchant": {
-                        "capabilities": {"card_payments": {"requested": True}},
-                    }
+                        "capabilities": {
+                            "card_payments": {"requested": True},
+                            "samsung_pay_payments": {"requested": True},
+                        },
+                    },
+                    "recipient": {
+                        "capabilities": {
+                            "stripe_balance": {"stripe_transfers": {"requested": True}}
+                        }
+                    },
                 },
                 "dashboard": "express",
             }
@@ -108,13 +142,16 @@ async def onboard_connect(
     else:
         stripe_account_id = account.stripe_account_id
 
+    fields = "eventually_due" if upfront else "currently_due"
+
     account_link = stripe_client.v2.core.account_links.create(
         {
             "account": stripe_account_id,
             "use_case": {
                 "type": "account_onboarding",
                 "account_onboarding": {
-                    "return_url": settings.stripe_connect_success_url,
+                    "collection_options": {"fields": fields},
+                    "return_url": settings.stripe_connect_settings_url,
                     "refresh_url": settings.stripe_connect_refresh_uri,
                     "configurations": ["merchant"],
                 },
@@ -122,6 +159,63 @@ async def onboard_connect(
         }
     )
     return OnboardResponse(redirect_url=account_link.url)
+
+
+@router.get("/refresh")
+async def refresh_stripe_onboarding(
+    current_user: CurrentUser = Depends(require_owner),
+    stripe_client: StripeClient = Depends(get_stripe_client),
+):
+    account = await connect_crud.get_by_owner(current_user.id)
+
+    if not account:
+        return RedirectResponse(
+            url=settings.stripe_connect_settings_url, status_code=303
+        )
+
+    account_link = stripe_client.v2.core.account_links.create(
+        {
+            "account": account.stripe_account_id,
+            "use_case": {
+                "type": "account_onboarding",
+                "account_onboarding": {
+                    "return_url": settings.stripe_connect_settings_url,
+                    "refresh_url": settings.stripe_connect_refresh_uri,
+                    "configurations": ["merchant"],
+                },
+            },
+        }
+    )
+
+    return RedirectResponse(url=account_link.url, status_code=303)
+
+
+@router.get("/update")
+async def update_stripe_account(
+    current_user: CurrentUser = Depends(require_owner),
+    stripe_client: StripeClient = Depends(get_stripe_client),
+):
+    account = await connect_crud.get_by_owner(current_user.id)
+
+    if not account:
+        return UpdateResponse(redirect_url=settings.stripe_connect_settings_url)
+
+    account_link = stripe_client.v2.core.account_links.create(
+        {
+            "account": account.stripe_account_id,
+            "use_case": {
+                "type": "account_update",
+                "account_update": {
+                    "collection_options": {"fields": "currently_due"},
+                    "return_url": settings.stripe_connect_settings_url,
+                    "refresh_url": settings.stripe_connect_refresh_uri,
+                    "configurations": ["merchant", "recipient"],
+                },
+            },
+        }
+    )
+
+    return UpdateResponse(redirect_url=account_link.url)
 
 
 @router.delete("", status_code=status.HTTP_204_NO_CONTENT)
@@ -199,11 +293,15 @@ async def connect_webhook(
         )
 
         charges_enabled = _merchant_card_payments_active(account)
-        requirements_outstanding = _has_outstanding_requirements(
+        requirements_outstanding, requirements_eventually_due = _requirements_summary(
             getattr(account, "requirements", None)
         )
 
         await connect_crud.update_charges_enabled(account_id, charges_enabled)
-        await connect_crud.update_requirements(account_id, requirements_outstanding)
+        await connect_crud.update_requirements(
+            account_id,
+            requirements_outstanding,
+            requirements_eventually_due,
+        )
 
     return {"received": True}

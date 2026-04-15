@@ -29,9 +29,9 @@ stripe_checkout_expires_minutes = int(
 
 stripe_connect_refresh_uri = os.environ.get(
     "STRIPE_CONNECT_REFRESH_URI",
-    "http://localhost/api/payments/connect/onboard",
+    "http://localhost/api/payments/connect/refresh",
 )
-stripe_connect_success_url = os.environ.get(
+stripe_connect_settings_url = os.environ.get(
     "STRIPE_CONNECT_SUCCESS_URL",
     "http://localhost/admin/settings/payments",
 )

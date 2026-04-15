@@ -44,6 +44,7 @@ class OwnerStripeAccount(Model):
     # Set to True when Stripe reports unresolved requirements (e.g. expired ID,
     # missing tax info).  Cleared automatically once the owner resolves them.
     requirements_outstanding = fields.BooleanField(default=False)
+    requirements_eventually_due = fields.BooleanField(default=False)
 
     class Meta:  # type: ignore
         table = "owner_stripe_accounts"

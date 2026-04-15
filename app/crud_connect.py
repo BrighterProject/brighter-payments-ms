@@ -22,7 +22,9 @@ class ConnectCRUD:
             existing.stripe_account_id = stripe_account_id
             existing.verified = verified
             existing.charges_enabled = charges_enabled
-            await existing.save(update_fields=["stripe_account_id", "verified", "charges_enabled"])
+            await existing.save(
+                update_fields=["stripe_account_id", "verified", "charges_enabled"]
+            )
             return existing
         return await OwnerStripeAccount.create(
             owner_id=owner_id,
@@ -41,7 +43,10 @@ class ConnectCRUD:
         )
 
     async def update_requirements(
-        self, stripe_account_id: str, has_requirements: bool
+        self,
+        stripe_account_id: str,
+        has_requirements: bool,
+        requirements_eventually_due: bool,
     ) -> None:
         """Called by the v2.core.account[requirements].updated webhook.
 
@@ -50,6 +55,7 @@ class ConnectCRUD:
         """
         await OwnerStripeAccount.filter(stripe_account_id=stripe_account_id).update(
             requirements_outstanding=has_requirements,
+            requirements_eventually_due=requirements_eventually_due,
         )
 
     async def delete_by_owner(self, owner_id: UUID) -> bool:
