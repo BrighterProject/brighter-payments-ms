@@ -49,17 +49,13 @@ def _requirements_summary(requirements: Any) -> tuple[bool, bool]:
     return currently_due, eventually_due
 
 
-def _merchant_card_payments_active(account: Any) -> bool:
-    """
-    Merchant capability status in Accounts v2.
-
-    The v2 merchant configuration exposes capability status directly.
-    """
+def _recipient_transfers_active(account: Any) -> bool:
     configuration = getattr(account, "configuration", None)
-    merchant = getattr(configuration, "merchant", None)
-    capabilities = getattr(merchant, "capabilities", None)
-    card_payments = getattr(capabilities, "card_payments", None)
-    return getattr(card_payments, "status", None) == "active"
+    recipient = getattr(configuration, "recipient", None)
+    capabilities = getattr(recipient, "capabilities", None)
+    stripe_transfers = getattr(capabilities, "stripe_balance", None)
+    stripe_transfers = getattr(stripe_transfers, "stripe_transfers", None)
+    return getattr(stripe_transfers, "status", None) == "active"
 
 
 @router.get("/status", response_model=ConnectStatusResponse)
@@ -72,14 +68,14 @@ async def connect_status(
         return ConnectStatusResponse(
             connected=False,
             verified=False,
-            charges_enabled=False,
+            transfers_active=False,
             stripe_account_id=None,
         )
 
     return ConnectStatusResponse(
         connected=True,
         verified=account.verified,
-        charges_enabled=account.charges_enabled,
+        transfers_active=account.transfers_active,
         stripe_account_id=account.stripe_account_id,
         requirements_outstanding=account.requirements_outstanding,
         requirements_eventually_due=account.requirements_eventually_due,
@@ -148,7 +144,7 @@ async def onboard_connect(
                     "collection_options": {"fields": fields},
                     "return_url": settings.stripe_connect_settings_url,
                     "refresh_url": settings.stripe_connect_refresh_uri,
-                    "configurations": ["merchant"],
+                    "configurations": ["recipient"],
                 },
             },
         }
@@ -176,7 +172,7 @@ async def refresh_stripe_onboarding(
                 "account_onboarding": {
                     "return_url": settings.stripe_connect_settings_url,
                     "refresh_url": settings.stripe_connect_refresh_uri,
-                    "configurations": ["merchant"],
+                    "configurations": ["recipient"],
                 },
             },
         }
@@ -204,7 +200,7 @@ async def update_stripe_account(
                     "collection_options": {"fields": "currently_due"},
                     "return_url": settings.stripe_connect_settings_url,
                     "refresh_url": settings.stripe_connect_refresh_uri,
-                    "configurations": ["merchant", "recipient"],
+                    "configurations": ["recipient"],
                 },
             },
         }
@@ -284,15 +280,15 @@ async def connect_webhook(
         # configuration fields.
         account = stripe_client.v2.core.accounts.retrieve(
             account_id,
-            params={"include": ["requirements", "configuration.merchant"]},
+            params={"include": ["requirements", "configuration.recipient"]},
         )
 
-        charges_enabled = _merchant_card_payments_active(account)
+        transfers_active = _recipient_transfers_active(account)
         requirements_outstanding, requirements_eventually_due = _requirements_summary(
             getattr(account, "requirements", None)
         )
 
-        await connect_crud.update_charges_enabled(account_id, charges_enabled)
+        await connect_crud.update_transfers_active(account_id, transfers_active)
         await connect_crud.update_requirements(
             account_id,
             requirements_outstanding,

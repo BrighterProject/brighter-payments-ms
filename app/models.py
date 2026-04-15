@@ -39,7 +39,7 @@ class OwnerStripeAccount(Model):
     id = fields.UUIDField(primary_key=True)
     owner_id = fields.UUIDField(unique=True)
     stripe_account_id = fields.CharField(max_length=255, unique=True)
-    charges_enabled = fields.BooleanField(default=False)
+    transfers_active = fields.BooleanField(default=False)
     verified = fields.BooleanField(default=False)
     # Set to True when Stripe reports unresolved requirements (e.g. expired ID,
     # missing tax info).  Cleared automatically once the owner resolves them.

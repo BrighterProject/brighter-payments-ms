@@ -105,7 +105,7 @@ async def create_checkout(
     # Route payment to the owner's connected Stripe account when available
     owner_connect = await connect_crud.get_by_owner(UUID(booking["property_owner_id"]))
     payment_intent_data: dict = {}
-    if owner_connect is not None and owner_connect.charges_enabled:
+    if owner_connect is not None and owner_connect.transfers_active:
         platform_fee_cents = int(
             amount_cents * settings.stripe_platform_fee_percent / 100
         )

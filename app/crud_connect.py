@@ -33,13 +33,13 @@ class ConnectCRUD:
             charges_enabled=charges_enabled,
         )
 
-    async def update_charges_enabled(
-        self, stripe_account_id: str, charges_enabled: bool
+    async def update_transfers_active(
+        self, stripe_account_id: str, transfers_active: bool
     ) -> None:
-        """Called by the v2.core.account.updated webhook to flip charges_enabled and verified."""
+        """Called by the v2.core.account.updated webhook to flip transfers_active and verified."""
         await OwnerStripeAccount.filter(stripe_account_id=stripe_account_id).update(
-            charges_enabled=charges_enabled,
-            verified=charges_enabled,
+            transfers_active=transfers_active,
+            verified=transfers_active,
         )
 
     async def update_requirements(
