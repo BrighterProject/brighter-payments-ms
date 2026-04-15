@@ -117,12 +117,6 @@ async def onboard_connect(
                     }
                 },
                 "configuration": {
-                    "merchant": {
-                        "capabilities": {
-                            "card_payments": {"requested": True},
-                            "samsung_pay_payments": {"requested": True},
-                        },
-                    },
                     "recipient": {
                         "capabilities": {
                             "stripe_balance": {"stripe_transfers": {"requested": True}}
