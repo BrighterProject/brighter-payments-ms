@@ -110,6 +110,7 @@ async def onboard_connect(
                     "country": country,
                     "entity_type": entity_type,
                 },
+                "contact_email": current_user.username,
                 "defaults": {
                     "responsibilities": {
                         "fees_collector": "application",
