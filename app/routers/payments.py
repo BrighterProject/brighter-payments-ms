@@ -1,3 +1,4 @@
+import asyncio
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Literal, cast
@@ -13,11 +14,13 @@ from app.crud_connect import connect_crud
 from app.deps import (
     BookingsClient,
     CurrentUser,
+    NotificationsClient,
     _get_system_admin,
     can_admin_delete_payment,
     can_read_payment,
     get_bookings_client,
     get_current_user,
+    get_notifications_client,
     get_stripe_client,
 )
 from app.schemas import CheckoutRequest, CheckoutResponse, PaymentResponse
@@ -288,6 +291,7 @@ async def stripe_webhook(
     request: Request,
     bookings_client: BookingsClient = Depends(get_bookings_client),
     stripe_client: StripeClient = Depends(get_stripe_client),
+    notifications_client: NotificationsClient = Depends(get_notifications_client),
 ) -> dict:
     """
     Stripe webhook endpoint.
@@ -318,7 +322,7 @@ async def stripe_webhook(
     obj = event.data.object
 
     if event.type == "checkout.session.completed":
-        await _handle_session_completed(obj)
+        await _handle_session_completed(obj, notifications_client)
     elif event.type == "checkout.session.expired":
         await _handle_session_expired(obj, bookings_client)
     elif event.type == "charge.refunded":
@@ -327,10 +331,21 @@ async def stripe_webhook(
     return {"received": True}
 
 
-async def _handle_session_completed(session) -> None:  # type: ignore[type-arg]
+async def _handle_session_completed(session, notifications_client: NotificationsClient) -> None:  # type: ignore[type-arg]
     """Mark payment as PAID once Stripe confirms the Checkout Session."""
     payment_intent_id = session.payment_intent or ""
     await payment_crud.mark_paid(session.id, payment_intent_id)
+
+    guest_email: str | None = getattr(
+        getattr(session, "customer_details", None), "email", None
+    )
+    if guest_email:
+        asyncio.create_task(
+            notifications_client.send(
+                to=guest_email,
+                notification_type="payment_receipt",
+            )
+        )
 
 
 async def _handle_session_expired(session, bookings_client: BookingsClient) -> None:  # type: ignore[type-arg]

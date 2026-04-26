@@ -3,6 +3,7 @@ import os
 db_url = os.environ.get("DB_URL", "sqlite://:memory:")
 
 bookings_ms_url = os.environ.get("BOOKINGS_MS_URL", "http://localhost:8002")
+notifications_ms_url = os.environ.get("NOTIFICATIONS_MS_URL", "http://localhost:8004")
 
 # Stripe credentials — use test keys locally, live keys in production
 stripe_secret_key = os.environ.get("STRIPE_SECRET_KEY", "sk_test_placeholder")
