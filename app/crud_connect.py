@@ -15,22 +15,22 @@ class ConnectCRUD:
         stripe_account_id: str,
         *,
         verified: bool,
-        charges_enabled: bool = False,
+        transfers_active: bool = False,
     ) -> OwnerStripeAccount:
         existing = await OwnerStripeAccount.get_or_none(owner_id=owner_id)
         if existing is not None:
             existing.stripe_account_id = stripe_account_id
             existing.verified = verified
-            existing.charges_enabled = charges_enabled
+            existing.transfers_active = transfers_active
             await existing.save(
-                update_fields=["stripe_account_id", "verified", "charges_enabled"]
+                update_fields=["stripe_account_id", "verified", "transfers_active"]
             )
             return existing
         return await OwnerStripeAccount.create(
             owner_id=owner_id,
             stripe_account_id=stripe_account_id,
             verified=verified,
-            charges_enabled=charges_enabled,
+            transfers_active=transfers_active,
         )
 
     async def update_transfers_active(

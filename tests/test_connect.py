@@ -84,9 +84,10 @@ def test_status_not_connected(owner_client):
     assert resp.json() == {
         "connected": False,
         "verified": False,
-        "charges_enabled": False,
+        "transfers_active": False,
         "stripe_account_id": None,
         "requirements_outstanding": False,
+        "requirements_eventually_due": False,
     }
 
 
@@ -96,8 +97,9 @@ def test_status_connected_verified(owner_client):
     mock_account = MagicMock(spec=OwnerStripeAccount)
     mock_account.stripe_account_id = STRIPE_ACCOUNT_ID
     mock_account.verified = True
-    mock_account.charges_enabled = True
+    mock_account.transfers_active = True
     mock_account.requirements_outstanding = False
+    mock_account.requirements_eventually_due = False
 
     with patch(
         "app.routers.connect.connect_crud.get_by_owner",
@@ -109,7 +111,7 @@ def test_status_connected_verified(owner_client):
     data = resp.json()
     assert data["connected"] is True
     assert data["verified"] is True
-    assert data["charges_enabled"] is True
+    assert data["transfers_active"] is True
     assert data["stripe_account_id"] == STRIPE_ACCOUNT_ID
     assert data["requirements_outstanding"] is False
 
@@ -120,8 +122,9 @@ def test_status_connected_pending(owner_client):
     mock_account = MagicMock(spec=OwnerStripeAccount)
     mock_account.stripe_account_id = STRIPE_ACCOUNT_ID
     mock_account.verified = False
-    mock_account.charges_enabled = False
+    mock_account.transfers_active = False
     mock_account.requirements_outstanding = False
+    mock_account.requirements_eventually_due = False
 
     with patch(
         "app.routers.connect.connect_crud.get_by_owner",
@@ -132,7 +135,7 @@ def test_status_connected_pending(owner_client):
     data = resp.json()
     assert data["connected"] is True
     assert data["verified"] is False
-    assert data["charges_enabled"] is False
+    assert data["transfers_active"] is False
     assert data["requirements_outstanding"] is False
 
 
@@ -142,8 +145,9 @@ def test_status_shows_requirements_outstanding(owner_client):
     mock_account = MagicMock(spec=OwnerStripeAccount)
     mock_account.stripe_account_id = STRIPE_ACCOUNT_ID
     mock_account.verified = True
-    mock_account.charges_enabled = True
+    mock_account.transfers_active = True
     mock_account.requirements_outstanding = True
+    mock_account.requirements_eventually_due = False
 
     with patch(
         "app.routers.connect.connect_crud.get_by_owner",
@@ -348,14 +352,14 @@ async def test_crud_upsert_creates_when_not_exists():
     mock_inst = MagicMock(spec=OwnerStripeAccount)
     mock_inst.stripe_account_id = STRIPE_ACCOUNT_ID
     mock_inst.verified = False
-    mock_inst.charges_enabled = False
+    mock_inst.transfers_active = False
 
     with (
         patch.object(OwnerStripeAccount, "get_or_none", AsyncMock(return_value=None)),
         patch.object(OwnerStripeAccount, "create", AsyncMock(return_value=mock_inst)),
     ):
         result = await ConnectCRUD().upsert(
-            PROPERTY_OWNER_ID, STRIPE_ACCOUNT_ID, verified=False, charges_enabled=False
+            PROPERTY_OWNER_ID, STRIPE_ACCOUNT_ID, verified=False, transfers_active=False
         )
 
     assert result.stripe_account_id == STRIPE_ACCOUNT_ID
@@ -374,17 +378,17 @@ async def test_crud_upsert_updates_when_exists():
         OwnerStripeAccount, "get_or_none", AsyncMock(return_value=existing)
     ):
         await ConnectCRUD().upsert(
-            PROPERTY_OWNER_ID, STRIPE_ACCOUNT_ID, verified=True, charges_enabled=True
+            PROPERTY_OWNER_ID, STRIPE_ACCOUNT_ID, verified=True, transfers_active=True
         )
 
     assert existing.stripe_account_id == STRIPE_ACCOUNT_ID
     assert existing.verified is True
-    assert existing.charges_enabled is True
+    assert existing.transfers_active is True
     existing.save.assert_called_once()
 
 
 @pytest.mark.asyncio
-async def test_crud_update_charges_enabled():
+async def test_crud_update_transfers_active():
     from app.crud_connect import ConnectCRUD
     from app.models import OwnerStripeAccount
 
@@ -392,11 +396,11 @@ async def test_crud_update_charges_enabled():
     mock_qs.update = AsyncMock(return_value=1)
 
     with patch.object(OwnerStripeAccount, "filter", return_value=mock_qs):
-        await ConnectCRUD().update_charges_enabled(
-            STRIPE_ACCOUNT_ID, charges_enabled=True
+        await ConnectCRUD().update_transfers_active(
+            STRIPE_ACCOUNT_ID, transfers_active=True
         )
 
-    mock_qs.update.assert_called_once_with(charges_enabled=True, verified=True)
+    mock_qs.update.assert_called_once_with(transfers_active=True, verified=True)
 
 
 @pytest.mark.asyncio
@@ -465,7 +469,7 @@ def test_require_owner_allows_admin():
 
 
 def _make_connect_stripe_client(
-    event_type: str, account_id: str, *, charges_enabled: bool = True
+    event_type: str, account_id: str, *, transfers_active: bool = True
 ):
     """Build a mock StripeClient for connect webhook tests."""
     sc = MagicMock()
@@ -476,18 +480,17 @@ def _make_connect_stripe_client(
     thin_event.related_object.id = account_id
     sc.parse_event_notification.return_value = thin_event
 
-    # v1.accounts.retrieve returns a minimal account object
+    # v2.core.accounts.retrieve returns a minimal account object
     account = MagicMock()
-    account.charges_enabled = charges_enabled
-    account.requirements.currently_due = []
-    account.requirements.past_due = []
-    sc.v1.accounts.retrieve.return_value = account
+    account.transfers_active = transfers_active
+    account.requirements.entries = []
+    sc.v2.core.accounts.retrieve.return_value = account
 
     return sc
 
 
 class TestConnectWebhook:
-    def test_account_updated_flips_charges_enabled(self, owner_client):
+    def test_account_updated_flips_transfers_active(self, owner_client):
         sc = _make_connect_stripe_client(
             "v2.core.account.updated",
             STRIPE_ACCOUNT_ID,
@@ -496,13 +499,15 @@ class TestConnectWebhook:
         sc.v2.core.accounts.retrieve.return_value = SimpleNamespace(
             id=STRIPE_ACCOUNT_ID,
             configuration=SimpleNamespace(
-                merchant=SimpleNamespace(
+                recipient=SimpleNamespace(
                     capabilities=SimpleNamespace(
-                        card_payments=SimpleNamespace(status="active")
+                        stripe_balance=SimpleNamespace(
+                            stripe_transfers=SimpleNamespace(status="active")
+                        )
                     )
                 )
             ),
-            requirements=SimpleNamespace(entries=[]),
+            requirements=SimpleNamespace(entries=[], summary=None),
         )
 
         client = TestClient(build_connect_app(make_property_owner(), stripe_client=sc))
@@ -513,7 +518,7 @@ class TestConnectWebhook:
                 AsyncMock(),
             ),
             patch(
-                "app.routers.connect.connect_crud.update_charges_enabled",
+                "app.routers.connect.connect_crud.update_transfers_active",
                 AsyncMock(),
             ) as mock_update,
         ):
@@ -528,19 +533,19 @@ class TestConnectWebhook:
 
         mock_update.assert_called_once_with(STRIPE_ACCOUNT_ID, True)
 
-    def test_account_updated_charges_disabled(self, owner_client):
+    def test_account_updated_transfers_disabled(self, owner_client):
         sc = _make_connect_stripe_client(
-            "v2.core.account.updated", STRIPE_ACCOUNT_ID, charges_enabled=False
+            "v2.core.account.updated", STRIPE_ACCOUNT_ID, transfers_active=False
         )
         client = TestClient(build_connect_app(make_property_owner(), stripe_client=sc))
 
         with (
             patch(
                 "app.routers.connect.connect_crud.update_requirements", AsyncMock()
-            ) as mock_update,
-            patch(
-                "app.routers.connect.connect_crud.update_charges_enabled", AsyncMock()
             ),
+            patch(
+                "app.routers.connect.connect_crud.update_transfers_active", AsyncMock()
+            ) as mock_update,
         ):
             resp = client.post(
                 "/payments/connect/webhook",
@@ -584,7 +589,7 @@ class TestConnectWebhook:
                 AsyncMock(),
             ) as mock_update,
             patch(
-                "app.routers.connect.connect_crud.update_charges_enabled",
+                "app.routers.connect.connect_crud.update_transfers_active",
                 AsyncMock(),
             ),
         ):
@@ -595,7 +600,7 @@ class TestConnectWebhook:
             )
 
         assert resp.status_code == 200
-        mock_update.assert_called_once_with(STRIPE_ACCOUNT_ID, True)
+        mock_update.assert_called_once_with(STRIPE_ACCOUNT_ID, True, False)
 
     def test_requirements_updated_clears_flag_when_resolved(self, owner_client):
         sc = _make_connect_stripe_client(
@@ -611,7 +616,7 @@ class TestConnectWebhook:
                 "app.routers.connect.connect_crud.update_requirements", AsyncMock()
             ) as mock_update,
             patch(
-                "app.routers.connect.connect_crud.update_charges_enabled", AsyncMock()
+                "app.routers.connect.connect_crud.update_transfers_active", AsyncMock()
             ),
         ):
             resp = client.post(
@@ -621,7 +626,7 @@ class TestConnectWebhook:
             )
 
         assert resp.status_code == 200
-        mock_update.assert_called_once_with(STRIPE_ACCOUNT_ID, False)
+        mock_update.assert_called_once_with(STRIPE_ACCOUNT_ID, False, False)
 
     def test_invalid_signature_returns_400(self, owner_client):
         import stripe as stripe_lib
@@ -687,10 +692,10 @@ async def test_crud_update_requirements_sets_flag():
 
     with patch.object(OwnerStripeAccount, "filter", return_value=mock_qs):
         await ConnectCRUD().update_requirements(
-            STRIPE_ACCOUNT_ID, has_requirements=True
+            STRIPE_ACCOUNT_ID, has_requirements=True, requirements_eventually_due=False
         )
 
-    mock_qs.update.assert_called_once_with(requirements_outstanding=True)
+    mock_qs.update.assert_called_once_with(requirements_outstanding=True, requirements_eventually_due=False)
 
 
 @pytest.mark.asyncio
@@ -703,7 +708,7 @@ async def test_crud_update_requirements_clears_flag():
 
     with patch.object(OwnerStripeAccount, "filter", return_value=mock_qs):
         await ConnectCRUD().update_requirements(
-            STRIPE_ACCOUNT_ID, has_requirements=False
+            STRIPE_ACCOUNT_ID, has_requirements=False, requirements_eventually_due=False
         )
 
-    mock_qs.update.assert_called_once_with(requirements_outstanding=False)
+    mock_qs.update.assert_called_once_with(requirements_outstanding=False, requirements_eventually_due=False)

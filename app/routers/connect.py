@@ -128,7 +128,7 @@ async def onboard_connect(
             current_user.id,
             stripe_account_id,
             verified=False,
-            charges_enabled=False,
+            transfers_active=False,
         )
     else:
         stripe_account_id = account.stripe_account_id
