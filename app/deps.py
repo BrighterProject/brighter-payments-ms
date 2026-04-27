@@ -166,6 +166,10 @@ class BookingsClient:
             )
         return resp.json()
 
+    async def get_booking_as_admin(self, booking_id: UUID) -> dict | None:
+        """Fetch booking using system admin credentials (for internal webhook use)."""
+        return await self.get_booking(booking_id, _get_system_admin())
+
     async def cancel_booking(self, booking_id: UUID, caller: CurrentUser) -> bool:
         """
         Cancel a booking by ID.
@@ -243,3 +247,57 @@ _notifications_client = NotificationsClient()
 
 def get_notifications_client() -> NotificationsClient:
     return _notifications_client
+
+
+# ---------------------------------------------------------------------------
+# PropertiesClient — look up property details from properties-ms
+# ---------------------------------------------------------------------------
+
+
+@lru_cache(maxsize=1)
+def _get_properties_http_client() -> httpx.AsyncClient:
+    return httpx.AsyncClient(
+        base_url=settings.properties_ms_url,
+        timeout=httpx.Timeout(5.0),
+        follow_redirects=True,
+    )
+
+
+class PropertiesClient:
+    @property
+    def _client(self) -> httpx.AsyncClient:
+        return _get_properties_http_client()
+
+    def _headers(self) -> dict[str, str]:
+        admin = _get_system_admin()
+        return {
+            "X-User-Id": str(admin.id),
+            "X-Username": quote(admin.username),
+            "X-User-Scopes": " ".join(admin.scopes),
+        }
+
+    async def get_property_name(self, property_id: UUID) -> str | None:
+        """Return the property name (English preferred, Bulgarian fallback)."""
+        try:
+            resp = await self._client.get(
+                f"/properties/{property_id}",
+                headers=self._headers(),
+            )
+            if resp.status_code != 200:
+                return None
+            translations = resp.json().get("translations", [])
+            for locale in ("en", "bg", "ru"):
+                for t in translations:
+                    if t.get("locale") == locale and t.get("name"):
+                        return t["name"]
+            return None
+        except Exception as exc:
+            logger.warning("PropertiesClient: failed to fetch property {} — {}", property_id, exc)
+            return None
+
+
+_properties_client = PropertiesClient()
+
+
+def get_properties_client() -> PropertiesClient:
+    return _properties_client

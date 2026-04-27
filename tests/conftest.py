@@ -15,6 +15,8 @@ from app.deps import (
     can_read_payment,
     get_bookings_client,
     get_current_user,
+    get_notifications_client,
+    get_properties_client,
     get_stripe_client,
 )
 from app.routers.payments import router
@@ -29,7 +31,20 @@ from .factories import make_admin, make_customer, make_property_owner
 def _noop_bookings_client():
     mock = MagicMock()
     mock.get_booking = AsyncMock(return_value=None)
+    mock.get_booking_as_admin = AsyncMock(return_value=None)
     mock.cancel_booking = AsyncMock(return_value=True)
+    return mock
+
+
+def _noop_notifications_client():
+    mock = MagicMock()
+    mock.send = AsyncMock(return_value=None)
+    return mock
+
+
+def _noop_properties_client():
+    mock = MagicMock()
+    mock.get_property_name = AsyncMock(return_value=None)
     return mock
 
 
@@ -56,6 +71,8 @@ def build_app(
     current_user,
     bookings_client=None,
     stripe_client=None,
+    notifications_client=None,
+    properties_client=None,
 ) -> FastAPI:
     """
     Fresh FastAPI app with auth/scope dependencies overridden to return
@@ -74,8 +91,12 @@ def build_app(
 
     bc = bookings_client if bookings_client is not None else _noop_bookings_client()
     sc = stripe_client if stripe_client is not None else _noop_stripe_client()
+    nc = notifications_client if notifications_client is not None else _noop_notifications_client()
+    pc = properties_client if properties_client is not None else _noop_properties_client()
     app.dependency_overrides[get_bookings_client] = lambda: bc
     app.dependency_overrides[get_stripe_client] = lambda: sc
+    app.dependency_overrides[get_notifications_client] = lambda: nc
+    app.dependency_overrides[get_properties_client] = lambda: pc
 
     return app
 
@@ -110,12 +131,20 @@ def anon_app():
 
 @pytest.fixture()
 def client_factory():
-    def _make(current_user, bookings_client=None, stripe_client=None) -> TestClient:
+    def _make(
+        current_user,
+        bookings_client=None,
+        stripe_client=None,
+        notifications_client=None,
+        properties_client=None,
+    ) -> TestClient:
         return TestClient(
             build_app(
                 current_user,
                 bookings_client=bookings_client,
                 stripe_client=stripe_client,
+                notifications_client=notifications_client,
+                properties_client=properties_client,
             ),
             raise_server_exceptions=True,
         )

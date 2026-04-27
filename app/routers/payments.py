@@ -15,12 +15,14 @@ from app.deps import (
     BookingsClient,
     CurrentUser,
     NotificationsClient,
+    PropertiesClient,
     _get_system_admin,
     can_admin_delete_payment,
     can_read_payment,
     get_bookings_client,
     get_current_user,
     get_notifications_client,
+    get_properties_client,
     get_stripe_client,
 )
 from app.schemas import CheckoutRequest, CheckoutResponse, PaymentResponse
@@ -292,6 +294,7 @@ async def stripe_webhook(
     bookings_client: BookingsClient = Depends(get_bookings_client),
     stripe_client: StripeClient = Depends(get_stripe_client),
     notifications_client: NotificationsClient = Depends(get_notifications_client),
+    properties_client: PropertiesClient = Depends(get_properties_client),
 ) -> dict:
     """
     Stripe webhook endpoint.
@@ -322,7 +325,7 @@ async def stripe_webhook(
     obj = event.data.object
 
     if event.type == "checkout.session.completed":
-        await _handle_session_completed(obj, notifications_client)
+        await _handle_session_completed(obj, bookings_client, properties_client, notifications_client)
     elif event.type == "checkout.session.expired":
         await _handle_session_expired(obj, bookings_client)
     elif event.type == "charge.refunded":
@@ -331,7 +334,12 @@ async def stripe_webhook(
     return {"received": True}
 
 
-async def _handle_session_completed(session, notifications_client: NotificationsClient) -> None:  # type: ignore[type-arg]
+async def _handle_session_completed(  # type: ignore[type-arg]
+    session,
+    bookings_client: BookingsClient,
+    properties_client: PropertiesClient,
+    notifications_client: NotificationsClient,
+) -> None:
     """Mark payment as PAID once Stripe confirms the Checkout Session."""
     payment_intent_id = session.payment_intent or ""
     await payment_crud.mark_paid(session.id, payment_intent_id)
@@ -339,13 +347,85 @@ async def _handle_session_completed(session, notifications_client: Notifications
     guest_email: str | None = getattr(
         getattr(session, "customer_details", None), "email", None
     )
-    if guest_email:
-        asyncio.create_task(
-            notifications_client.send(
-                to=guest_email,
-                notification_type="payment_receipt",
-            )
+    if not guest_email:
+        return
+
+    receipt_data = await _build_receipt_data(session, bookings_client, properties_client)
+    asyncio.create_task(
+        notifications_client.send(
+            to=guest_email,
+            notification_type="payment_receipt",
+            data=receipt_data,
         )
+    )
+
+
+async def _build_receipt_data(  # type: ignore[type-arg]
+    session,
+    bookings_client: BookingsClient,
+    properties_client: PropertiesClient,
+) -> dict:
+    """Assemble the template data dict for the payment_receipt email."""
+    amount_total = getattr(session, "amount_total", 0)
+    amount_cents = int(amount_total) if isinstance(amount_total, (int, float)) else 0
+    currency = (getattr(session, "currency", "eur") or "eur")
+    currency = currency.upper() if isinstance(currency, str) else "EUR"
+
+    data: dict = {
+        "receipt_id": str(session.id)[-8:].upper() if isinstance(session.id, str) else "",
+        "payment_date": datetime.now(UTC).strftime("%d %B %Y"),
+        "currency": currency,
+        "total_amount": f"{amount_cents / 100:.2f}",
+        "payment_method": "Credit / Debit Card",
+    }
+
+    booking_id_str = (getattr(session, "metadata", None) or {}).get(
+        "booking_id"
+    ) or getattr(session, "client_reference_id", None)
+
+    if not booking_id_str:
+        return data
+
+    try:
+        booking_id = UUID(booking_id_str)
+        booking = await bookings_client.get_booking_as_admin(booking_id)
+    except (ValueError, Exception):
+        logger.warning("payment_receipt: could not fetch booking {}", booking_id_str)
+        return data
+
+    if not booking:
+        return data
+
+    data["booking_id"] = str(booking["id"])
+
+    start = booking.get("start_date", "")
+    end = booking.get("end_date", "")
+    data["start_date"] = str(start)
+    data["end_date"] = str(end)
+
+    try:
+        from datetime import date as _date
+        num_nights = (_date.fromisoformat(str(end)) - _date.fromisoformat(str(start))).days
+        data["num_nights"] = str(num_nights)
+    except (ValueError, TypeError):
+        pass
+
+    price_per_night = booking.get("price_per_night")
+    if price_per_night is not None:
+        data["room_rate"] = f"{float(price_per_night):.2f}"
+
+    property_id_str = booking.get("property_id")
+    if property_id_str:
+        try:
+            property_id = UUID(str(property_id_str))
+            name = await properties_client.get_property_name(property_id)
+            if name:
+                data["property_name"] = name
+            data["property_id"] = str(property_id)
+        except (ValueError, Exception):
+            logger.warning("payment_receipt: could not fetch property name for {}", property_id_str)
+
+    return data
 
 
 async def _handle_session_expired(session, bookings_client: BookingsClient) -> None:  # type: ignore[type-arg]
