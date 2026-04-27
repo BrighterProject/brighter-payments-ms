@@ -392,8 +392,11 @@ async def _build_receipt_data(  # type: ignore[type-arg]
     try:
         booking_id = UUID(booking_id_str)
         booking = await bookings_client.get_booking_as_admin(booking_id)
-    except (ValueError, Exception):
-        logger.warning("payment_receipt: could not fetch booking {}", booking_id_str)
+    except ValueError as exc:
+        logger.warning("payment_receipt: invalid booking_id {} — {}", booking_id_str, exc)
+        return data
+    except Exception as exc:
+        logger.error("payment_receipt: could not fetch booking {} — {}", booking_id_str, exc)
         return data
 
     if not booking:
