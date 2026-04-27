@@ -326,7 +326,9 @@ async def stripe_webhook(
     obj = event.data.object
 
     if event.type == "checkout.session.completed":
-        await _handle_session_completed(obj, bookings_client, properties_client, notifications_client, stripe_client)
+        await _handle_session_completed(
+            obj, bookings_client, properties_client, notifications_client, stripe_client
+        )
     elif event.type == "checkout.session.expired":
         await _handle_session_expired(obj, bookings_client)
     elif event.type == "charge.refunded":
@@ -335,7 +337,9 @@ async def stripe_webhook(
     return {"received": True}
 
 
-async def _fetch_stripe_receipt_url(stripe_client: StripeClient, payment_intent_id: str) -> str | None:  # type: ignore[type-arg]
+async def _fetch_stripe_receipt_url(
+    stripe_client: StripeClient, payment_intent_id: str
+) -> str | None:  # type: ignore[type-arg]
     """Return Stripe's hosted receipt URL for the given PaymentIntent, or None on failure."""
     try:
         pi = stripe_client.v1.payment_intents.retrieve(
@@ -343,7 +347,11 @@ async def _fetch_stripe_receipt_url(stripe_client: StripeClient, payment_intent_
         )
         return getattr(pi.latest_charge, "receipt_url", None)
     except Exception as exc:
-        logger.warning("payment_receipt: could not fetch Stripe receipt URL for {} — {}", payment_intent_id, exc)
+        logger.warning(
+            "payment_receipt: could not fetch Stripe receipt URL for {} — {}",
+            payment_intent_id,
+            exc,
+        )
         return None
 
 
@@ -364,10 +372,14 @@ async def _handle_session_completed(  # type: ignore[type-arg]
     if not guest_email:
         return
 
-    receipt_data = await _build_receipt_data(session, bookings_client, properties_client)
+    receipt_data = await _build_receipt_data(
+        session, bookings_client, properties_client
+    )
 
     if payment_intent_id:
-        stripe_receipt_url = await _fetch_stripe_receipt_url(stripe_client, payment_intent_id)
+        stripe_receipt_url = await _fetch_stripe_receipt_url(
+            stripe_client, payment_intent_id
+        )
         if stripe_receipt_url:
             receipt_data["download_receipt_url"] = stripe_receipt_url
 
@@ -388,11 +400,13 @@ async def _build_receipt_data(  # type: ignore[type-arg]
     """Assemble the template data dict for the payment_receipt email."""
     amount_total = getattr(session, "amount_total", 0)
     amount_cents = int(amount_total) if isinstance(amount_total, (int, float)) else 0
-    currency = (getattr(session, "currency", "eur") or "eur")
+    currency = getattr(session, "currency", "eur") or "eur"
     currency = currency.upper() if isinstance(currency, str) else "EUR"
 
     data: dict = {
-        "receipt_id": str(session.id)[-8:].upper() if isinstance(session.id, str) else "",
+        "receipt_id": str(session.id)[-8:].upper()
+        if isinstance(session.id, str)
+        else "",
         "payment_date": datetime.now(UTC).strftime("%d %B %Y"),
         "currency": currency,
         "total_amount": f"{amount_cents / 100:.2f}",
@@ -412,10 +426,14 @@ async def _build_receipt_data(  # type: ignore[type-arg]
         booking_id = UUID(booking_id_str)
         booking = await bookings_client.get_booking_as_admin(booking_id)
     except ValueError as exc:
-        logger.warning("payment_receipt: invalid booking_id {} — {}", booking_id_str, exc)
+        logger.warning(
+            "payment_receipt: invalid booking_id {} — {}", booking_id_str, exc
+        )
         return data
     except Exception as exc:
-        logger.error("payment_receipt: could not fetch booking {} — {}", booking_id_str, exc)
+        logger.error(
+            "payment_receipt: could not fetch booking {} — {}", booking_id_str, exc
+        )
         return data
 
     if not booking:
@@ -430,10 +448,13 @@ async def _build_receipt_data(  # type: ignore[type-arg]
 
     try:
         from datetime import date as _date
-        num_nights = (_date.fromisoformat(str(end)) - _date.fromisoformat(str(start))).days
+
+        num_nights = (
+            _date.fromisoformat(str(end)) - _date.fromisoformat(str(start))
+        ).days
         data["num_nights"] = str(num_nights)
-    except (ValueError, TypeError):
-        pass
+    except (ValueError, TypeError) as exc:
+        logger.warning("payment_receipt: could not calculate nights from dates {} to {} — {}", start, end, exc)
 
     price_per_night = booking.get("price_per_night")
     if price_per_night is not None:
@@ -448,7 +469,9 @@ async def _build_receipt_data(  # type: ignore[type-arg]
                 data["property_name"] = name
             data["property_id"] = str(property_id)
         except (ValueError, Exception):
-            logger.warning("payment_receipt: could not fetch property name for {}", property_id_str)
+            logger.warning(
+                "payment_receipt: could not fetch property name for {}", property_id_str
+            )
 
     return data
 
@@ -461,18 +484,19 @@ async def _handle_session_expired(session, bookings_client: BookingsClient) -> N
     """
     await payment_crud.mark_failed(session.id)
 
-    booking_id_str = (session.metadata or {}).get(
-        "booking_id"
-    ) or session.client_reference_id
+    metadata = getattr(session, "metadata", None)
+    booking_id_str = getattr(metadata, "booking_id", None) or getattr(
+        session, "client_reference_id", None
+    )
+
     if not booking_id_str:
         return
 
     try:
         booking_id = UUID(booking_id_str)
         await bookings_client.cancel_booking(booking_id, _get_system_admin())
-    except (ValueError, Exception):
-        # Silently swallow — in production, emit a structured log here
-        pass
+    except (ValueError, Exception) as exc:
+        logger.error("could send cancel booking request {} — {}", booking_id_str, exc)
 
 
 async def _handle_charge_refunded(charge) -> None:  # type: ignore[type-arg]
@@ -522,9 +546,8 @@ async def abandon_checkout(
 
     try:
         stripe_client.v1.checkout.sessions.expire(payment.stripe_session_id)
-    except stripe.InvalidRequestError:
-        # Session already expired or completed — webhook will handle the rest
-        pass
+    except stripe.InvalidRequestError as exc:
+        logger.debug("checkout session {} already expired or completed — {}", payment.stripe_session_id, exc)
 
     return {"abandoned": True}
 
