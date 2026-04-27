@@ -326,7 +326,7 @@ async def stripe_webhook(
     obj = event.data.object
 
     if event.type == "checkout.session.completed":
-        await _handle_session_completed(obj, bookings_client, properties_client, notifications_client)
+        await _handle_session_completed(obj, bookings_client, properties_client, notifications_client, stripe_client)
     elif event.type == "checkout.session.expired":
         await _handle_session_expired(obj, bookings_client)
     elif event.type == "charge.refunded":
@@ -335,11 +335,24 @@ async def stripe_webhook(
     return {"received": True}
 
 
+async def _fetch_stripe_receipt_url(stripe_client: StripeClient, payment_intent_id: str) -> str | None:  # type: ignore[type-arg]
+    """Return Stripe's hosted receipt URL for the given PaymentIntent, or None on failure."""
+    try:
+        pi = stripe_client.v1.payment_intents.retrieve(
+            payment_intent_id, params={"expand": ["latest_charge"]}
+        )
+        return getattr(pi.latest_charge, "receipt_url", None)
+    except Exception as exc:
+        logger.warning("payment_receipt: could not fetch Stripe receipt URL for {} — {}", payment_intent_id, exc)
+        return None
+
+
 async def _handle_session_completed(  # type: ignore[type-arg]
     session,
     bookings_client: BookingsClient,
     properties_client: PropertiesClient,
     notifications_client: NotificationsClient,
+    stripe_client: StripeClient,
 ) -> None:
     """Mark payment as PAID once Stripe confirms the Checkout Session."""
     payment_intent_id = session.payment_intent or ""
@@ -352,6 +365,12 @@ async def _handle_session_completed(  # type: ignore[type-arg]
         return
 
     receipt_data = await _build_receipt_data(session, bookings_client, properties_client)
+
+    if payment_intent_id:
+        stripe_receipt_url = await _fetch_stripe_receipt_url(stripe_client, payment_intent_id)
+        if stripe_receipt_url:
+            receipt_data["download_receipt_url"] = stripe_receipt_url
+
     asyncio.create_task(
         notifications_client.send(
             to=guest_email,
