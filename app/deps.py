@@ -31,7 +31,7 @@ def _get_system_admin() -> "CurrentUser":
         _SYSTEM_ADMIN = CurrentUser(
             id=UUID("00000000-0000-0000-0000-000000000001"),
             username="payments-ms",
-            scopes=["admin:bookings:write", "admin:scopes", "admin:notifications:write"],
+            scopes=["admin:bookings:read", "admin:bookings:write", "admin:scopes", "admin:notifications:write"],
         )
     return _SYSTEM_ADMIN
 
