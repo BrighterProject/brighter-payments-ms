@@ -6,6 +6,7 @@ from uuid import UUID
 
 import stripe
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from loguru import logger
 from stripe import StripeClient
 
 from app import settings
@@ -379,9 +380,11 @@ async def _build_receipt_data(  # type: ignore[type-arg]
         "payment_method": "Credit / Debit Card",
     }
 
-    booking_id_str = (getattr(session, "metadata", None) or {}).get(
-        "booking_id"
-    ) or getattr(session, "client_reference_id", None)
+    # Stripe SDK v8+ uses attribute-style access on StripeObject, not dict .get()
+    metadata = getattr(session, "metadata", None)
+    booking_id_str = getattr(metadata, "booking_id", None) or getattr(
+        session, "client_reference_id", None
+    )
 
     if not booking_id_str:
         return data
