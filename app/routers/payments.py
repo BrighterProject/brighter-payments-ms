@@ -441,6 +441,10 @@ async def _build_receipt_data(  # type: ignore[type-arg]
 
     data["booking_id"] = str(booking["id"])
 
+    num_guests = booking.get("num_guests")
+    if num_guests is not None:
+        data["num_guests"] = str(num_guests)
+
     start = booking.get("start_date", "")
     end = booking.get("end_date", "")
     data["start_date"] = str(start)
