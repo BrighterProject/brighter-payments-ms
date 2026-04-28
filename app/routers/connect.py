@@ -14,7 +14,7 @@ from app.crud_connect import connect_crud
 from app.deps import CurrentUser, get_stripe_client, require_owner
 from app.schemas import ConnectStatusResponse, OnboardResponse, UpdateResponse
 
-router = APIRouter(prefix="/payments/connect", tags=["stripe-connect"])
+router = APIRouter(prefix="/payments-connect", tags=["stripe-connect"])
 
 
 def _requirements_summary(requirements: Any) -> tuple[bool, bool]:
@@ -209,7 +209,7 @@ async def update_stripe_account(
     return UpdateResponse(redirect_url=account_link.url)
 
 
-@router.delete("", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/", status_code=status.HTTP_204_NO_CONTENT)
 async def disconnect_connect(
     current_user: CurrentUser = Depends(require_owner),
     stripe_client: StripeClient = Depends(get_stripe_client),

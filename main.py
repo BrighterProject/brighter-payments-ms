@@ -6,6 +6,7 @@ from loguru import logger
 from ms_core import setup_app
 
 from app.logging import setup_logging
+from app.routers.connect import router as connect_router
 from app.settings import db_url, stripe_secret_key, stripe_webhook_secret
 
 setup_logging()
@@ -30,3 +31,5 @@ application.add_middleware(
 tortoise_conf = setup_app(
     application, db_url, Path("app") / "routers", ["app.models", "aerich.models"]
 )
+
+application.include_router(connect_router)

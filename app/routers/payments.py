@@ -458,7 +458,12 @@ async def _build_receipt_data(  # type: ignore[type-arg]
         ).days
         data["num_nights"] = str(num_nights)
     except (ValueError, TypeError) as exc:
-        logger.warning("payment_receipt: could not calculate nights from dates {} to {} — {}", start, end, exc)
+        logger.warning(
+            "payment_receipt: could not calculate nights from dates {} to {} — {}",
+            start,
+            end,
+            exc,
+        )
 
     price_per_night = booking.get("price_per_night")
     if price_per_night is not None:
@@ -551,7 +556,11 @@ async def abandon_checkout(
     try:
         stripe_client.v1.checkout.sessions.expire(payment.stripe_session_id)
     except stripe.InvalidRequestError as exc:
-        logger.debug("checkout session {} already expired or completed — {}", payment.stripe_session_id, exc)
+        logger.debug(
+            "checkout session {} already expired or completed — {}",
+            payment.stripe_session_id,
+            exc,
+        )
 
     return {"abandoned": True}
 
