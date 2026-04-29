@@ -120,7 +120,7 @@ async def create_checkout(
             "transfer_data": {"destination": owner_connect.stripe_account_id},
         }
 
-    checkout_params: dict = {
+    checkout_params = {
         "mode": "payment",
         "locale": cast(Literal["en", "bg", "auto"], locale),
         "line_items": [
@@ -141,6 +141,7 @@ async def create_checkout(
         ],
         # client_reference_id lets us look up the booking in the webhook
         "client_reference_id": str(payload.booking_id),
+        "customer_email": current_user.username,
         "metadata": {
             "booking_id": str(payload.booking_id),
             "user_id": str(current_user.id),
