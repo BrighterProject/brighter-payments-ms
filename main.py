@@ -9,6 +9,17 @@ from app.logging import setup_logging
 from app.routers.connect import router as connect_router
 from app.settings import db_url, stripe_secret_key, stripe_webhook_secret
 
+TORTOISE_ORM = {
+    "connections": {"default": db_url},
+    "apps": {
+        "models": {
+            "models": ["app.models"],
+            "default_connection": "default",
+            "migrations": "migrations.models",
+        },
+    },
+}
+
 setup_logging()
 
 _PLACEHOLDER_KEYS = {"sk_test_placeholder", "whsec_placeholder"}
@@ -28,8 +39,6 @@ application.add_middleware(
     allow_headers=["*"],
 )
 
-tortoise_conf = setup_app(
-    application, db_url, Path("app") / "routers", ["app.models", "aerich.models"]
-)
+setup_app(application, db_url, Path("app") / "routers", ["app.models"])
 
 application.include_router(connect_router)
