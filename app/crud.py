@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
 from ms_core import CRUD
 
-from app.models import Payment, PaymentStatus
+from app.models import OwnerSubscription, Payment, PaymentStatus, SubscriptionPlan, SubscriptionStatus
 from app.schemas import PaymentResponse
 
 
@@ -99,3 +100,69 @@ class PaymentCRUD(CRUD[Payment, PaymentResponse]):  # type: ignore
 
 
 payment_crud = PaymentCRUD(Payment, PaymentResponse)
+
+
+class SubscriptionCRUD:
+    """CRUD operations for subscription plans and owner subscriptions."""
+
+    async def list_plans(self) -> list[SubscriptionPlan]:
+        """Return all active subscription plans."""
+        return await SubscriptionPlan.filter(is_active=True).all()
+
+    async def get_plan_by_slug(self, slug: str) -> SubscriptionPlan | None:
+        return await SubscriptionPlan.get_or_none(slug=slug)
+
+    async def get_owner_subscription(self, owner_id: UUID) -> OwnerSubscription | None:
+        return await OwnerSubscription.get_or_none(owner_id=owner_id).select_related("plan")
+
+    async def get_by_stripe_subscription_id(self, stripe_sub_id: str) -> OwnerSubscription | None:
+        return await OwnerSubscription.get_or_none(
+            stripe_subscription_id=stripe_sub_id
+        ).select_related("plan")
+
+    async def upsert_subscription(
+        self,
+        owner_id: UUID,
+        plan_id: UUID,
+        status: SubscriptionStatus,
+        stripe_customer_id: str | None = None,
+        stripe_subscription_id: str | None = None,
+        current_period_end: datetime | None = None,
+    ) -> OwnerSubscription:
+        sub, _ = await OwnerSubscription.get_or_create(owner_id=owner_id)
+        sub.plan_id = plan_id
+        sub.status = status
+        if stripe_customer_id:
+            sub.stripe_customer_id = stripe_customer_id
+        if stripe_subscription_id:
+            sub.stripe_subscription_id = stripe_subscription_id
+        if current_period_end:
+            sub.current_period_end = current_period_end
+        await sub.save()
+        return await OwnerSubscription.get(id=sub.id).select_related("plan")
+
+    async def cancel_subscription(self, owner_id: UUID) -> OwnerSubscription | None:
+        sub = await self.get_owner_subscription(owner_id)
+        if sub:
+            sub.status = SubscriptionStatus.CANCELLED
+            sub.cancelled_at = datetime.utcnow()
+            await sub.save()
+        return sub
+
+    async def can_add_listing(self, owner_id: UUID) -> bool:
+        """Return True if owner has an active subscription with quota remaining."""
+        sub = await self.get_owner_subscription(owner_id)
+        if sub is None or sub.status not in (SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING):
+            return False
+        if sub.plan.max_listings == -1:
+            return True
+        active_count = await _count_owner_listings(owner_id)
+        return active_count < sub.plan.max_listings
+
+
+async def _count_owner_listings(owner_id: UUID) -> int:
+    """Cross-service stub — replaced by PaymentsClient call in properties-ms Task 4."""
+    return 0
+
+
+subscription_crud = SubscriptionCRUD()
