@@ -42,3 +42,17 @@ stripe_connect_settings_url = os.environ.get(
 stripe_platform_fee_percent = float(
     os.environ.get("STRIPE_PLATFORM_FEE_PERCENT", "10.0")
 )
+
+# Subscription checkout return URLs
+stripe_subscription_success_url = os.environ.get(
+    "STRIPE_SUBSCRIPTION_SUCCESS_URL",
+    "http://localhost/en/owner/subscription?status=success",
+)
+stripe_subscription_cancel_url = os.environ.get(
+    "STRIPE_SUBSCRIPTION_CANCEL_URL",
+    "http://localhost/en/owner/subscription?status=cancelled",
+)
+stripe_portal_return_url = os.environ.get(
+    "STRIPE_PORTAL_RETURN_URL",
+    "http://localhost/en/owner/subscription",
+)

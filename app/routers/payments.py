@@ -10,7 +10,7 @@ from loguru import logger
 from stripe import StripeClient
 
 from app import settings
-from app.crud import payment_crud
+from app.crud import payment_crud, subscription_crud
 from app.crud_connect import connect_crud
 from app.deps import (
     BookingsClient,
@@ -334,6 +334,13 @@ async def stripe_webhook(
         await _handle_session_expired(obj, bookings_client)
     elif event.type == "charge.refunded":
         await _handle_charge_refunded(obj)
+    elif event.type in (
+        "customer.subscription.created",
+        "customer.subscription.updated",
+    ):
+        await _handle_subscription_updated(obj)
+    elif event.type == "customer.subscription.deleted":
+        await _handle_subscription_deleted(obj)
 
     return {"received": True}
 
@@ -517,6 +524,54 @@ async def _handle_charge_refunded(charge) -> None:  # type: ignore[type-arg]
     payment_intent_id = charge.payment_intent
     if payment_intent_id:
         await payment_crud.mark_refunded(payment_intent_id)
+
+
+async def _handle_subscription_updated(subscription) -> None:  # type: ignore[type-arg]
+    from app.models import SubscriptionStatus
+
+    owner_id_str = getattr(getattr(subscription, "metadata", None), "owner_id", None)
+    if not owner_id_str:
+        return
+
+    stripe_sub_id = getattr(subscription, "id", None)
+    stripe_customer_id = getattr(subscription, "customer", None)
+    raw_status = getattr(subscription, "status", "incomplete")
+    try:
+        new_status = SubscriptionStatus(raw_status)
+    except ValueError:
+        new_status = SubscriptionStatus.INCOMPLETE
+
+    period_end_ts = getattr(subscription, "current_period_end", None)
+    current_period_end = (
+        datetime.fromtimestamp(period_end_ts, tz=UTC) if period_end_ts else None
+    )
+
+    items_data = getattr(getattr(subscription, "items", None), "data", [])
+    first_item = items_data[0] if items_data else None
+    price_obj = getattr(first_item, "price", None) if first_item else None
+    plan_slug = getattr(getattr(price_obj, "metadata", None), "plan_slug", None)
+    plan = await subscription_crud.get_plan_by_slug(plan_slug) if plan_slug else None
+    if plan is None:
+        logger.warning(
+            "subscription_webhook: unknown plan_slug {} for owner {}", plan_slug, owner_id_str
+        )
+        return
+
+    await subscription_crud.upsert_subscription(
+        owner_id=UUID(owner_id_str),
+        plan_id=plan.id,
+        status=new_status,
+        stripe_customer_id=stripe_customer_id,
+        stripe_subscription_id=stripe_sub_id,
+        current_period_end=current_period_end,
+    )
+
+
+async def _handle_subscription_deleted(subscription) -> None:  # type: ignore[type-arg]
+    owner_id_str = getattr(getattr(subscription, "metadata", None), "owner_id", None)
+    if not owner_id_str:
+        return
+    await subscription_crud.cancel_subscription(UUID(owner_id_str))
 
 
 # ---------------------------------------------------------------------------
