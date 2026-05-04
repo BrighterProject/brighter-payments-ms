@@ -8,6 +8,51 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict
 
 
+class SubscriptionPlanSlug(StrEnum):
+    STARTER = "starter"
+    BASIC = "basic"
+    PRO = "pro"
+    BUSINESS = "business"
+    ENTERPRISE = "enterprise"
+
+
+class SubscriptionStatus(StrEnum):
+    TRIALING = "trialing"
+    ACTIVE = "active"
+    PAST_DUE = "past_due"
+    CANCELLED = "cancelled"
+    INCOMPLETE = "incomplete"
+
+
+class SubscriptionPlanResponse(BaseModel):
+    id: UUID
+    slug: SubscriptionPlanSlug
+    name: str
+    max_listings: int
+    price_eur_cents: int
+    stripe_price_id: str | None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class OwnerSubscriptionResponse(BaseModel):
+    id: UUID
+    owner_id: UUID
+    plan: SubscriptionPlanResponse
+    status: SubscriptionStatus
+    current_period_end: datetime | None
+    cancelled_at: datetime | None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SubscriptionCheckoutResponse(BaseModel):
+    checkout_url: str
+    session_id: str
+
+
+class PortalResponse(BaseModel):
+    portal_url: str
+
+
 class PaymentStatus(StrEnum):
     PENDING = "pending"
     PAID = "paid"

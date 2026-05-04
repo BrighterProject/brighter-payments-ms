@@ -48,3 +48,48 @@ class OwnerStripeAccount(Model):
 
     class Meta:  # type: ignore
         table = "owner_stripe_accounts"
+
+
+class SubscriptionPlanSlug(StrEnum):
+    STARTER = "starter"
+    BASIC = "basic"
+    PRO = "pro"
+    BUSINESS = "business"
+    ENTERPRISE = "enterprise"
+
+
+class SubscriptionStatus(StrEnum):
+    TRIALING = "trialing"
+    ACTIVE = "active"
+    PAST_DUE = "past_due"
+    CANCELLED = "cancelled"
+    INCOMPLETE = "incomplete"
+
+
+class SubscriptionPlan(Model):
+    id = fields.UUIDField(primary_key=True)
+    slug = fields.CharEnumField(SubscriptionPlanSlug, unique=True)
+    name = fields.CharField(max_length=100)
+    max_listings = fields.IntField()
+    price_eur_cents = fields.IntField()
+    stripe_price_id = fields.CharField(max_length=255, null=True)
+    is_active = fields.BooleanField(default=True)
+
+    class Meta:  # type: ignore
+        table = "subscription_plans"
+
+
+class OwnerSubscription(Model):
+    id = fields.UUIDField(primary_key=True)
+    owner_id = fields.UUIDField(unique=True)
+    plan = fields.ForeignKeyField(
+        "models.SubscriptionPlan", related_name="subscriptions", on_delete=fields.RESTRICT
+    )
+    status = fields.CharEnumField(SubscriptionStatus, default=SubscriptionStatus.INCOMPLETE)
+    stripe_customer_id = fields.CharField(max_length=255, null=True)
+    stripe_subscription_id = fields.CharField(max_length=255, null=True, unique=True)
+    current_period_end = fields.DatetimeField(null=True)
+    cancelled_at = fields.DatetimeField(null=True)
+
+    class Meta:  # type: ignore
+        table = "owner_subscriptions"
