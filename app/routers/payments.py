@@ -150,6 +150,19 @@ async def create_checkout(
     if payment_intent_data:
         checkout_params["payment_intent_data"] = payment_intent_data
 
+    # Add Stripe processing fee as a separate line item — passed to the customer
+    fee_pct = Decimal(str(settings.stripe_processing_fee_pct)) / 100
+    fee_fixed = Decimal(settings.stripe_processing_fee_fixed_eur_cents) / 100
+    stripe_fee = (total_price * fee_pct + fee_fixed).quantize(Decimal("0.01"))
+    checkout_params["line_items"].append({
+        "price_data": {
+            "currency": currency,
+            "product_data": {"name": "Payment processing fee"},
+            "unit_amount": int(stripe_fee * 100),
+        },
+        "quantity": 1,
+    })
+
     session = stripe_client.v1.checkout.sessions.create(params=checkout_params)
 
     payment = await payment_crud.create(

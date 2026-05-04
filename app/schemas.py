@@ -103,3 +103,29 @@ class ConnectStatusResponse(BaseModel):
     stripe_account_id: str | None
     requirements_outstanding: bool = False
     requirements_eventually_due: bool = False
+
+
+class BankTransferStatus(StrEnum):
+    PENDING = "pending"
+    CONFIRMED = "confirmed"
+    CANCELLED = "cancelled"
+
+
+class BankTransferRequest(BaseModel):
+    booking_id: UUID
+
+
+class BankTransferResponse(BaseModel):
+    id: UUID
+    booking_id: UUID
+    status: BankTransferStatus
+    amount: Decimal
+    currency: str
+    bank_iban: str
+    bank_bic: str
+    bank_name: str
+    account_holder: str
+    reference: str
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)

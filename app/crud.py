@@ -6,8 +6,16 @@ from uuid import UUID
 
 from ms_core import CRUD
 
-from app.models import OwnerSubscription, Payment, PaymentStatus, SubscriptionPlan, SubscriptionStatus
-from app.schemas import PaymentResponse
+from app.models import (
+    BankTransferPayment,
+    BankTransferStatus,
+    OwnerSubscription,
+    Payment,
+    PaymentStatus,
+    SubscriptionPlan,
+    SubscriptionStatus,
+)
+from app.schemas import BankTransferResponse, PaymentResponse
 
 
 class PaymentCRUD(CRUD[Payment, PaymentResponse]):  # type: ignore
@@ -166,3 +174,54 @@ async def _count_owner_listings(owner_id: UUID) -> int:
 
 
 subscription_crud = SubscriptionCRUD()
+
+
+class BankTransferCRUD:
+    """CRUD operations for bank-transfer payment intents."""
+
+    async def create_intent(
+        self,
+        booking_id: UUID,
+        user_id: UUID,
+        property_owner_id: UUID,
+        amount: Decimal,
+        currency: str,
+    ) -> BankTransferPayment:
+        from app import settings
+
+        reference = f"BK-{str(booking_id)[:8].upper()}"
+        return await BankTransferPayment.create(
+            booking_id=booking_id,
+            user_id=user_id,
+            property_owner_id=property_owner_id,
+            amount=amount,
+            currency=currency,
+            bank_iban=settings.bank_iban,
+            bank_bic=settings.bank_bic,
+            bank_name=settings.bank_name,
+            account_holder=settings.bank_account_holder,
+            reference=reference,
+        )
+
+    async def get_by_id(self, intent_id: UUID) -> BankTransferPayment | None:
+        """Return a bank transfer intent by primary key."""
+        return await BankTransferPayment.get_or_none(id=intent_id)
+
+    async def confirm_intent(self, intent_id: UUID) -> BankTransferPayment | None:
+        """Mark the intent as confirmed (owner received the transfer)."""
+        intent = await self.get_by_id(intent_id)
+        if intent:
+            intent.status = BankTransferStatus.CONFIRMED
+            await intent.save()
+        return intent
+
+    async def cancel_intent(self, intent_id: UUID) -> BankTransferPayment | None:
+        """Mark the intent as cancelled."""
+        intent = await self.get_by_id(intent_id)
+        if intent:
+            intent.status = BankTransferStatus.CANCELLED
+            await intent.save()
+        return intent
+
+
+bank_transfer_crud = BankTransferCRUD()

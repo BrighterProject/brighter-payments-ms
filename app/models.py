@@ -93,3 +93,28 @@ class OwnerSubscription(Model):
 
     class Meta:  # type: ignore
         table = "owner_subscriptions"
+
+
+class BankTransferStatus(StrEnum):
+    PENDING = "pending"
+    CONFIRMED = "confirmed"
+    CANCELLED = "cancelled"
+
+
+class BankTransferPayment(Model):
+    id = fields.UUIDField(primary_key=True)
+    booking_id = fields.UUIDField()
+    user_id = fields.UUIDField()
+    property_owner_id = fields.UUIDField()
+    amount = fields.DecimalField(max_digits=10, decimal_places=2)
+    currency = fields.CharField(max_length=3, default="EUR")
+    status = fields.CharEnumField(BankTransferStatus, default=BankTransferStatus.PENDING)
+    bank_iban = fields.CharField(max_length=34)
+    bank_bic = fields.CharField(max_length=11)
+    bank_name = fields.CharField(max_length=100)
+    account_holder = fields.CharField(max_length=200)
+    reference = fields.CharField(max_length=50)
+    updated_at = fields.DatetimeField(auto_now=True)
+
+    class Meta:  # type: ignore
+        table = "bank_transfer_payments"
