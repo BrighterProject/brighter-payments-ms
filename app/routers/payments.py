@@ -109,14 +109,11 @@ async def create_checkout(
     product_name = _product_names.get(payload.locale or "", "Property booking")
 
     # Route payment to the owner's connected Stripe account when available
+    # No platform fee — the subscription model is the revenue source
     owner_connect = await connect_crud.get_by_owner(UUID(booking["property_owner_id"]))
     payment_intent_data: dict = {}
     if owner_connect is not None and owner_connect.transfers_active:
-        platform_fee_cents = int(
-            amount_cents * settings.stripe_platform_fee_percent / 100
-        )
         payment_intent_data = {
-            "application_fee_amount": platform_fee_cents,
             "transfer_data": {"destination": owner_connect.stripe_account_id},
         }
 
