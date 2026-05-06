@@ -158,6 +158,10 @@ class SubscriptionCRUD:
             await sub.save()
         return sub
 
+    async def list_all(self) -> list[OwnerSubscription]:
+        """Return all owner subscriptions with plan data (admin use)."""
+        return await OwnerSubscription.all().select_related("plan").order_by("-created_at")
+
     async def can_add_listing(self, owner_id: UUID) -> bool:
         """Return True if owner has an active subscription with quota remaining."""
         sub = await self.get_owner_subscription(owner_id)

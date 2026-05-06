@@ -6,15 +6,24 @@ from stripe import StripeClient
 
 from app import settings
 from app.crud import subscription_crud
-from app.deps import CurrentUser, get_current_user, get_stripe_client
+from app.deps import CurrentUser, get_current_user, get_stripe_client, require_scopes
 from app.schemas import (
     OwnerSubscriptionResponse,
     PortalResponse,
     SubscriptionCheckoutResponse,
     SubscriptionPlanResponse,
 )
+from app.scopes import PaymentScope
 
 router = APIRouter(prefix="/subscriptions", tags=["subscriptions"])
+
+
+@router.get("/", response_model=list[OwnerSubscriptionResponse])
+async def list_all_subscriptions(
+    _: CurrentUser = Depends(require_scopes(PaymentScope.ADMIN_READ)),
+) -> list[OwnerSubscriptionResponse]:
+    subs = await subscription_crud.list_all()
+    return [OwnerSubscriptionResponse.model_validate(s) for s in subs]
 
 
 @router.get("/plans", response_model=list[SubscriptionPlanResponse])

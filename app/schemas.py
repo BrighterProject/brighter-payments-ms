@@ -130,6 +130,11 @@ class BankTransferStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+class PaymentCapabilitiesResponse(BaseModel):
+    can_accept_card: bool
+    can_accept_bank_transfer: bool
+
+
 class BankTransferRequest(BaseModel):
     booking_id: UUID
 

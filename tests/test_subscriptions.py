@@ -95,6 +95,26 @@ def _make_plan(slug, plan_name, max_listings, price, stripe_price_id):
     return m
 
 
+def test_list_all_subscriptions_admin(sub_admin_client):
+    mock_sub = MagicMock()
+    mock_sub.id = uuid4()
+    mock_sub.owner_id = uuid4()
+    mock_sub.status = "active"
+    mock_sub.current_period_end = None
+    mock_sub.cancelled_at = None
+    mock_sub.plan = _make_plan("basic", "Basic", 5, 2500, "price_b")
+    with patch("app.routers.subscriptions.subscription_crud") as mock:
+        mock.list_all = AsyncMock(return_value=[mock_sub])
+        resp = sub_admin_client.get("/subscriptions/")
+    assert resp.status_code == 200
+    assert len(resp.json()) == 1
+
+
+def test_list_all_subscriptions_forbidden_for_owner(sub_owner_client):
+    resp = sub_owner_client.get("/subscriptions/")
+    assert resp.status_code == 403
+
+
 def test_list_plans_returns_all(sub_admin_client):
     mock_plans = [
         _make_plan("starter", "Starter", 1, 800, "price_s"),

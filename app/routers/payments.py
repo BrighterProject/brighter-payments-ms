@@ -10,7 +10,7 @@ from loguru import logger
 from stripe import StripeClient
 
 from app import settings
-from app.crud import payment_crud, subscription_crud
+from app.crud import owner_bank_account_crud, payment_crud, subscription_crud
 from app.crud_connect import connect_crud
 from app.deps import (
     BookingsClient,
@@ -25,11 +25,37 @@ from app.deps import (
     get_notifications_client,
     get_properties_client,
     get_stripe_client,
+    require_owner,
 )
-from app.schemas import CheckoutRequest, CheckoutResponse, PaymentResponse
+from app.schemas import CheckoutRequest, CheckoutResponse, PaymentCapabilitiesResponse, PaymentResponse
 from app.scopes import PaymentScope
 
 router = APIRouter(prefix="/payments", tags=["payments"])
+
+
+# ---------------------------------------------------------------------------
+# GET /payments/capabilities
+# ---------------------------------------------------------------------------
+
+
+@router.get("/capabilities", response_model=PaymentCapabilitiesResponse)
+async def get_payment_capabilities(
+    current_user: CurrentUser = Depends(require_owner),
+) -> PaymentCapabilitiesResponse:
+    """Return which payment methods the authenticated owner may enable on their properties."""
+    stripe_account = await connect_crud.get_by_owner(current_user.id)
+    bank_account = await owner_bank_account_crud.get_by_owner(current_user.id)
+
+    can_accept_card = (
+        stripe_account is not None
+        and stripe_account.transfers_active
+        and not stripe_account.requirements_outstanding
+    )
+
+    return PaymentCapabilitiesResponse(
+        can_accept_card=can_accept_card,
+        can_accept_bank_transfer=bank_account is not None,
+    )
 
 
 # ---------------------------------------------------------------------------
