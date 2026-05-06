@@ -7,5 +7,5 @@ class Migration(Migration):
     initial = False
 
     operations = [
-        SQLOperation('ALTER TABLE "payments" ADD COLUMN IF NOT EXISTS "locale" VARCHAR(10) NOT NULL DEFAULT \'en\';'),
+        SQLOperation('ALTER TABLE "payments" ADD COLUMN IF NOT EXISTS "locale" VARCHAR(10) NOT NULL DEFAULT \'en\';', []),
     ]
