@@ -28,6 +28,7 @@ class Payment(Model):
     currency = fields.CharField(max_length=3, default="EUR")
 
     status = fields.CharEnumField(PaymentStatus, default=PaymentStatus.PENDING)
+    locale = fields.CharField(max_length=10, default="en")
     updated_at = fields.DatetimeField(auto_now=True)
 
     class Meta:  # type: ignore

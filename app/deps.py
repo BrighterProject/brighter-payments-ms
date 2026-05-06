@@ -223,7 +223,7 @@ class NotificationsClient:
         }
 
     async def send(
-        self, *, to: str, notification_type: str, data: dict | None = None
+        self, *, to: str, notification_type: str, data: dict | None = None, locale: str | None = None
     ) -> None:
         try:
             logger.debug("Sending notification from payments-ms | type={} to={} data={}", notification_type, to, data)
@@ -234,6 +234,7 @@ class NotificationsClient:
                     "to": to,
                     "data": data or {},
                     "triggered_by": "payments-ms",
+                    "locale": locale,
                 },
                 headers=self._headers(),
             )

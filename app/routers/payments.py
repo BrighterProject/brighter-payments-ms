@@ -198,6 +198,7 @@ async def create_checkout(
         stripe_session_id=session.id,
         amount=total_price,
         currency=booking.get("currency", "EUR").upper(),
+        locale=locale,
     )
 
     return CheckoutResponse(
@@ -408,7 +409,8 @@ async def _handle_session_completed(  # type: ignore[type-arg]
 ) -> None:
     """Mark payment as PAID once Stripe confirms the Checkout Session."""
     payment_intent_id = session.payment_intent or ""
-    await payment_crud.mark_paid(session.id, payment_intent_id)
+    payment = await payment_crud.mark_paid(session.id, payment_intent_id)
+    payment_locale = payment.locale if payment else "en"
 
     guest_email: str | None = getattr(
         getattr(session, "customer_details", None), "email", None
@@ -432,6 +434,7 @@ async def _handle_session_completed(  # type: ignore[type-arg]
             to=guest_email,
             notification_type="payment_receipt",
             data=receipt_data,
+            locale=payment_locale,
         )
     )
 

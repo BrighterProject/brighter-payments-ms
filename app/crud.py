@@ -29,6 +29,7 @@ class PaymentCRUD(CRUD[Payment, PaymentResponse]):  # type: ignore
         stripe_session_id: str,
         amount: Decimal,
         currency: str,
+        locale: str = "en",
     ) -> PaymentResponse:
         inst = await Payment.create(
             booking_id=booking_id,
@@ -37,6 +38,7 @@ class PaymentCRUD(CRUD[Payment, PaymentResponse]):  # type: ignore
             stripe_session_id=stripe_session_id,
             amount=amount,
             currency=currency,
+            locale=locale,
         )
         return PaymentResponse.model_validate(inst)
 
