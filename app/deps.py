@@ -301,3 +301,54 @@ _properties_client = PropertiesClient()
 
 def get_properties_client() -> PropertiesClient:
     return _properties_client
+
+
+# ---------------------------------------------------------------------------
+# UsersClient — fetch user profiles from users-ms
+# ---------------------------------------------------------------------------
+
+
+@lru_cache(maxsize=1)
+def _get_users_http_client() -> httpx.AsyncClient:
+    return httpx.AsyncClient(
+        base_url=settings.users_ms_url,
+        timeout=httpx.Timeout(5.0),
+        follow_redirects=True,
+    )
+
+
+class UsersClient:
+    @property
+    def _client(self) -> httpx.AsyncClient:
+        return _get_users_http_client()
+
+    def _headers(self) -> dict[str, str]:
+        admin = _get_system_admin()
+        return {
+            "X-User-Id": str(admin.id),
+            "X-Username": quote(admin.username),
+            "X-User-Scopes": " ".join(admin.scopes) + " admin:users:read",
+        }
+
+    async def get_user(self, user_id: UUID) -> dict | None:
+        """Return user dict or None on 404."""
+        try:
+            resp = await self._client.get(
+                f"/users/{user_id}", headers=self._headers()
+            )
+            if resp.status_code == 404:
+                return None
+            if resp.status_code >= 400:
+                logger.warning("UsersClient: GET /users/{} returned {}", user_id, resp.status_code)
+                return None
+            return resp.json()
+        except Exception as exc:
+            logger.warning("UsersClient: failed to fetch user {} — {}", user_id, exc)
+            return None
+
+
+_users_client = UsersClient()
+
+
+def get_users_client() -> UsersClient:
+    return _users_client

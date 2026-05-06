@@ -105,6 +105,25 @@ class ConnectStatusResponse(BaseModel):
     requirements_eventually_due: bool = False
 
 
+class OwnerBankAccountUpsert(BaseModel):
+    iban: str
+    bic: str | None = None
+    bank_name: str | None = None
+    account_holder: str
+
+
+class OwnerBankAccountResponse(BaseModel):
+    id: UUID
+    owner_id: UUID
+    iban: str
+    bic: str | None
+    bank_name: str | None
+    account_holder: str
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class BankTransferStatus(StrEnum):
     PENDING = "pending"
     CONFIRMED = "confirmed"

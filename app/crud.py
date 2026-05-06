@@ -9,13 +9,14 @@ from ms_core import CRUD
 from app.models import (
     BankTransferPayment,
     BankTransferStatus,
+    OwnerBankAccount,
     OwnerSubscription,
     Payment,
     PaymentStatus,
     SubscriptionPlan,
     SubscriptionStatus,
 )
-from app.schemas import BankTransferResponse, PaymentResponse
+from app.schemas import BankTransferResponse, OwnerBankAccountResponse, PaymentResponse
 
 
 class PaymentCRUD(CRUD[Payment, PaymentResponse]):  # type: ignore
@@ -186,9 +187,11 @@ class BankTransferCRUD:
         property_owner_id: UUID,
         amount: Decimal,
         currency: str,
+        bank_iban: str,
+        bank_bic: str,
+        bank_name: str,
+        account_holder: str,
     ) -> BankTransferPayment:
-        from app import settings
-
         reference = f"BK-{str(booking_id)[:8].upper()}"
         return await BankTransferPayment.create(
             booking_id=booking_id,
@@ -196,10 +199,10 @@ class BankTransferCRUD:
             property_owner_id=property_owner_id,
             amount=amount,
             currency=currency,
-            bank_iban=settings.bank_iban,
-            bank_bic=settings.bank_bic,
-            bank_name=settings.bank_name,
-            account_holder=settings.bank_account_holder,
+            bank_iban=bank_iban,
+            bank_bic=bank_bic,
+            bank_name=bank_name,
+            account_holder=account_holder,
             reference=reference,
         )
 
@@ -225,3 +228,30 @@ class BankTransferCRUD:
 
 
 bank_transfer_crud = BankTransferCRUD()
+
+
+class OwnerBankAccountCRUD:
+    """CRUD operations for owner bank accounts used in bank-transfer payments."""
+
+    async def upsert(
+        self,
+        owner_id: UUID,
+        iban: str,
+        account_holder: str,
+        bic: str | None = None,
+        bank_name: str | None = None,
+    ) -> OwnerBankAccountResponse:
+        account, _ = await OwnerBankAccount.get_or_create(owner_id=owner_id)
+        account.iban = iban
+        account.account_holder = account_holder
+        account.bic = bic
+        account.bank_name = bank_name
+        await account.save()
+        return OwnerBankAccountResponse.model_validate(account)
+
+    async def get_by_owner(self, owner_id: UUID) -> OwnerBankAccountResponse | None:
+        account = await OwnerBankAccount.get_or_none(owner_id=owner_id)
+        return OwnerBankAccountResponse.model_validate(account) if account else None
+
+
+owner_bank_account_crud = OwnerBankAccountCRUD()

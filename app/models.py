@@ -95,6 +95,21 @@ class OwnerSubscription(Model):
         table = "owner_subscriptions"
 
 
+class OwnerBankAccount(Model):
+    """Owner's personal bank account used for bank-transfer bookings."""
+
+    id = fields.UUIDField(primary_key=True)
+    owner_id = fields.UUIDField(unique=True)
+    iban = fields.CharField(max_length=34)
+    bic = fields.CharField(max_length=11, null=True)
+    bank_name = fields.CharField(max_length=100, null=True)
+    account_holder = fields.CharField(max_length=200)
+    updated_at = fields.DatetimeField(auto_now=True)
+
+    class Meta:  # type: ignore
+        table = "owner_bank_accounts"
+
+
 class BankTransferStatus(StrEnum):
     PENDING = "pending"
     CONFIRMED = "confirmed"

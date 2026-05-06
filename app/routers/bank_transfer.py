@@ -3,7 +3,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.crud import bank_transfer_crud
+from app.crud import bank_transfer_crud, owner_bank_account_crud
 from app.deps import BookingsClient, CurrentUser, get_bookings_client, get_current_user
 from app.schemas import BankTransferRequest, BankTransferResponse
 
@@ -16,7 +16,7 @@ async def create_bank_transfer_intent(
     current_user: CurrentUser = Depends(get_current_user),
     bookings_client: BookingsClient = Depends(get_bookings_client),
 ) -> BankTransferResponse:
-    """Create a bank transfer intent with platform bank details for a pending booking."""
+    """Create a bank transfer intent; guest pays the owner's personal bank account directly."""
     booking = await bookings_client.get_booking(payload.booking_id, current_user)
     if booking is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found.")
@@ -30,12 +30,24 @@ async def create_bank_transfer_intent(
             detail=f"Cannot initiate payment for booking with status '{booking['status']}'.",
         )
 
+    owner_id = UUID(booking["property_owner_id"])
+    owner_bank = await owner_bank_account_crud.get_by_owner(owner_id)
+    if owner_bank is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Property owner has no bank account configured.",
+        )
+
     intent = await bank_transfer_crud.create_intent(
         booking_id=payload.booking_id,
         user_id=current_user.id,
-        property_owner_id=UUID(booking["property_owner_id"]),
+        property_owner_id=owner_id,
         amount=Decimal(str(booking["total_price"])),
         currency=booking.get("currency", "EUR"),
+        bank_iban=owner_bank.iban,
+        bank_bic=owner_bank.bic or "",
+        bank_name=owner_bank.bank_name or "",
+        account_holder=owner_bank.account_holder,
     )
     return BankTransferResponse.model_validate(intent)
 
