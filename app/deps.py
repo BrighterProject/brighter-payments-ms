@@ -187,6 +187,18 @@ class BookingsClient:
         except (httpx.RequestError, Exception):
             return False
 
+    async def confirm_booking(self, booking_id: UUID, caller: CurrentUser) -> bool:
+        """Confirm a booking after a bank transfer is verified. Silently returns False on error."""
+        try:
+            resp = await self._client.patch(
+                f"/bookings/{booking_id}/status",
+                json={"status": "confirmed"},
+                headers=self._headers(caller),
+            )
+            return resp.status_code < 400
+        except (httpx.RequestError, Exception):
+            return False
+
 
 _bookings_client = BookingsClient()
 

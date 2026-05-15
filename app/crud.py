@@ -232,6 +232,22 @@ class BankTransferCRUD:
             await intent.save()
         return intent
 
+    async def list_by_status(
+        self,
+        status: BankTransferStatus | None = None,
+        owner_id: UUID | None = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> list[BankTransferPayment]:
+        """List bank transfer intents, optionally filtered by status and/or owner."""
+        qs = BankTransferPayment.all()
+        if status is not None:
+            qs = qs.filter(status=status)
+        if owner_id is not None:
+            qs = qs.filter(property_owner_id=owner_id)
+        offset = (page - 1) * page_size
+        return await qs.order_by("-created_at").offset(offset).limit(page_size)
+
 
 bank_transfer_crud = BankTransferCRUD()
 
@@ -247,8 +263,7 @@ class OwnerBankAccountCRUD:
         bic: str | None = None,
         bank_name: str | None = None,
     ) -> OwnerBankAccountResponse:
-        account, _ = await OwnerBankAccount.get_or_create(owner_id=owner_id)
-        account.iban = iban
+        account, _ = await OwnerBankAccount.get_or_create(dict(iban=iban), owner_id=owner_id)
         account.account_holder = account_holder
         account.bic = bic
         account.bank_name = bank_name

@@ -142,6 +142,8 @@ class BankTransferRequest(BaseModel):
 class BankTransferResponse(BaseModel):
     id: UUID
     booking_id: UUID
+    user_id: UUID
+    property_owner_id: UUID
     status: BankTransferStatus
     amount: Decimal
     currency: str
