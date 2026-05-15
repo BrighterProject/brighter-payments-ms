@@ -117,12 +117,11 @@ async def create_checkout(
     amount_cents = int(total_price * 100)
     locale = payload.locale or "en"
 
-    # Append a placeholder that Stripe replaces with the real session ID
     success_url = (
-        settings.stripe_success_url.replace("/bookings", f"/{locale}/bookings")
-        + "&session_id={CHECKOUT_SESSION_ID}"
+        settings.stripe_success_url.replace("{locale}", locale)
+        + "?session_id={CHECKOUT_SESSION_ID}"
     )
-    cancel_url = settings.stripe_cancel_url.replace("/bookings", f"/{locale}/bookings")
+    cancel_url = settings.stripe_cancel_url.replace("{locale}", locale)
 
     expires_at = datetime.now(UTC) + timedelta(
         minutes=settings.stripe_checkout_expires_minutes
@@ -262,6 +261,35 @@ async def get_payment_by_booking(
         )
 
     return payment
+
+
+# ---------------------------------------------------------------------------
+# GET /payments/session/{session_id}
+# ---------------------------------------------------------------------------
+
+
+@router.get("/session/{session_id}", response_model=PaymentResponse)
+async def get_payment_by_session(
+    session_id: str,
+    current_user: CurrentUser = Depends(can_read_payment),
+) -> PaymentResponse:
+    """Return a payment by its Stripe Checkout Session ID (used by the success page to poll status)."""
+    payment = await payment_crud.get_by_session(session_id)
+    if payment is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Payment not found.",
+        )
+    is_admin = (
+        PaymentScope.ADMIN in current_user.scopes
+        or PaymentScope.ADMIN_READ in current_user.scopes
+    )
+    if not is_admin and payment.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only view your own payments.",
+        )
+    return PaymentResponse.model_validate(payment)
 
 
 # ---------------------------------------------------------------------------

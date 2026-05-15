@@ -14,14 +14,15 @@ stripe_connect_webhook_secret = os.environ.get(
     "STRIPE_CONNECT_WEBHOOK_SECRET", "whsec_connect_placeholder"
 )
 
-# Return URLs after Stripe Checkout — should be your frontend origin
+# Return URLs after Stripe Checkout — should be your frontend origin.
+# Use {locale} as a placeholder; payments-ms replaces it with the actual locale at checkout time.
 stripe_success_url = os.environ.get(
     "STRIPE_SUCCESS_URL",
-    "http://localhost/bookings?payment=success",
+    "http://localhost/{locale}/bookings/success",
 )
 stripe_cancel_url = os.environ.get(
     "STRIPE_CANCEL_URL",
-    "http://localhost/bookings?payment=cancelled",
+    "http://localhost/{locale}/bookings/cancel",
 )
 
 # How long the Stripe Checkout page stays valid before expiring (minutes)
