@@ -359,6 +359,32 @@ class UsersClient:
             logger.warning("UsersClient: failed to fetch user {} — {}", user_id, exc)
             return None
 
+    async def grant_role(self, user_id: UUID, role: str = "owner") -> None:
+        """Grant a named role to a user via users-ms. Logs at ERROR on failure; never raises."""
+        try:
+            resp = await self._client.post(
+                f"/users/{user_id}/grant-role",
+                json={"role": role},
+                headers=self._headers(),
+            )
+            if resp.status_code not in (200, 204):
+                logger.error(
+                    "UsersClient.grant_role: failed for user_id={} role={} — HTTP {} {}",
+                    user_id,
+                    role,
+                    resp.status_code,
+                    resp.text,
+                )
+                # TODO: trigger high-priority alert (e.g. Sentry capture_exception with level="fatal")
+                # so ops can manually grant the role. Include owner_id in the alert payload.
+        except Exception as exc:
+            logger.error(
+                "UsersClient.grant_role: exception for user_id={} role={} — {}",
+                user_id,
+                role,
+                exc,
+            )
+
 
 _users_client = UsersClient()
 
