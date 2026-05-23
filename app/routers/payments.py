@@ -5,7 +5,7 @@ from typing import Literal, cast
 from uuid import UUID
 
 import stripe
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from loguru import logger
 from stripe import StripeClient
 
@@ -17,6 +17,7 @@ from app.deps import (
     CurrentUser,
     NotificationsClient,
     PropertiesClient,
+    UsersClient,
     _get_system_admin,
     can_admin_delete_payment,
     can_read_payment,
@@ -25,6 +26,7 @@ from app.deps import (
     get_notifications_client,
     get_properties_client,
     get_stripe_client,
+    get_users_client,
     require_owner,
 )
 from app.schemas import CheckoutRequest, CheckoutResponse, PaymentCapabilitiesResponse, PaymentResponse
@@ -109,6 +111,12 @@ async def create_checkout(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Cannot pay for a booking with status '{booking['status']}'.",
+        )
+
+    if booking.get("payment_method") not in (None, "card"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="This booking was not created with card as the payment method.",
         )
 
     # Amount fetched from booking — never trust client-supplied values
@@ -358,10 +366,12 @@ async def refund_booking_payment(
 @router.post("/webhook")
 async def stripe_webhook(
     request: Request,
+    background_tasks: BackgroundTasks,
     bookings_client: BookingsClient = Depends(get_bookings_client),
     stripe_client: StripeClient = Depends(get_stripe_client),
     notifications_client: NotificationsClient = Depends(get_notifications_client),
     properties_client: PropertiesClient = Depends(get_properties_client),
+    users_client: UsersClient = Depends(get_users_client),
 ) -> dict:
     """
     Stripe webhook endpoint.
@@ -403,7 +413,7 @@ async def stripe_webhook(
         "customer.subscription.created",
         "customer.subscription.updated",
     ):
-        await _handle_subscription_updated(obj)
+        await _handle_subscription_updated(obj, users_client, notifications_client, background_tasks)
     elif event.type == "customer.subscription.deleted":
         await _handle_subscription_deleted(obj)
 
@@ -593,7 +603,12 @@ async def _handle_charge_refunded(charge) -> None:  # type: ignore[type-arg]
         await payment_crud.mark_refunded(payment_intent_id)
 
 
-async def _handle_subscription_updated(subscription) -> None:  # type: ignore[type-arg]
+async def _handle_subscription_updated(  # type: ignore[type-arg]
+    subscription,
+    users_client: UsersClient,
+    notifications_client: NotificationsClient,
+    background_tasks: BackgroundTasks,
+) -> None:
     from app.models import SubscriptionStatus
 
     owner_id_str = getattr(getattr(subscription, "metadata", None), "owner_id", None)
@@ -632,6 +647,22 @@ async def _handle_subscription_updated(subscription) -> None:  # type: ignore[ty
         stripe_subscription_id=stripe_sub_id,
         current_period_end=current_period_end,
     )
+
+    if new_status in (SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING):
+        user = await users_client.get_user(UUID(owner_id_str))
+        owner_email: str | None = user.get("email") if user else None
+        owner_locale: str = user.get("locale", "bg") if user else "bg"
+
+        await users_client.grant_role(UUID(owner_id_str))
+
+        if owner_email:
+            background_tasks.add_task(
+                notifications_client.send,
+                to=owner_email,
+                notification_type="owner_welcome",
+                data={"owner_id": owner_id_str},
+                locale=owner_locale,
+            )
 
 
 async def _handle_subscription_deleted(subscription) -> None:  # type: ignore[type-arg]
