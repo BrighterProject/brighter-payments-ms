@@ -169,3 +169,86 @@ def test_subscribe_enterprise_returns_422(sub_owner_client):
         mock_crud.get_plan_by_slug = AsyncMock(return_value=mock_plan)
         resp = sub_owner_client.post("/subscriptions/checkout?plan_slug=enterprise")
     assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Locale support — checkout and portal redirect URLs
+# ---------------------------------------------------------------------------
+
+
+def _build_sub_app_with_stripe(current_user):
+    """Like _build_sub_app but returns the stripe mock for assertion."""
+    from app.routers.subscriptions import router as sub_router
+    from app.deps import get_current_user, get_stripe_client
+
+    app = FastAPI()
+    app.include_router(sub_router)
+
+    async def _user():
+        return current_user
+
+    app.dependency_overrides[get_current_user] = _user
+    mock_stripe = MagicMock()
+    app.dependency_overrides[get_stripe_client] = lambda: mock_stripe
+    return TestClient(app, raise_server_exceptions=True), mock_stripe
+
+
+def test_checkout_success_url_uses_en_locale():
+    client, mock_stripe = _build_sub_app_with_stripe(make_property_owner())
+
+    mock_session = MagicMock()
+    mock_session.url = "https://checkout.stripe.com/test"
+    mock_session.id = "cs_test_en"
+    mock_stripe.v1.checkout.sessions.create.return_value = mock_session
+
+    with patch(
+        "app.routers.subscriptions.subscription_crud.get_plan_by_slug",
+        new=AsyncMock(return_value=_make_plan("starter", "Starter", 1, 999, "price_test")),
+    ):
+        resp = client.post("/subscriptions/checkout?plan_slug=starter&locale=en")
+
+    assert resp.status_code == 201
+    call_params = mock_stripe.v1.checkout.sessions.create.call_args[1]["params"]
+    assert "/en/subscription/success" in call_params["success_url"]
+    assert "/en/pricing" in call_params["cancel_url"]
+    assert "session_id=" in call_params["success_url"]
+
+
+def test_checkout_defaults_to_bg_locale():
+    client, mock_stripe = _build_sub_app_with_stripe(make_property_owner())
+
+    mock_session = MagicMock()
+    mock_session.url = "https://checkout.stripe.com/test"
+    mock_session.id = "cs_test_bg"
+    mock_stripe.v1.checkout.sessions.create.return_value = mock_session
+
+    with patch(
+        "app.routers.subscriptions.subscription_crud.get_plan_by_slug",
+        new=AsyncMock(return_value=_make_plan("starter", "Starter", 1, 999, "price_test")),
+    ):
+        resp = client.post("/subscriptions/checkout?plan_slug=starter")
+
+    assert resp.status_code == 201
+    call_params = mock_stripe.v1.checkout.sessions.create.call_args[1]["params"]
+    assert "/bg/subscription/success" in call_params["success_url"]
+    assert "/bg/pricing" in call_params["cancel_url"]
+
+
+def test_portal_return_url_uses_locale():
+    client, mock_stripe = _build_sub_app_with_stripe(make_property_owner())
+
+    mock_sub = MagicMock()
+    mock_sub.stripe_customer_id = "cus_test"
+    mock_portal = MagicMock()
+    mock_portal.url = "https://billing.stripe.com/test"
+    mock_stripe.v1.billing_portal.sessions.create.return_value = mock_portal
+
+    with patch(
+        "app.routers.subscriptions.subscription_crud.get_owner_subscription",
+        new=AsyncMock(return_value=mock_sub),
+    ):
+        resp = client.post("/subscriptions/portal?locale=en")
+
+    assert resp.status_code == 200
+    call_params = mock_stripe.v1.billing_portal.sessions.create.call_args[1]["params"]
+    assert "/en/pricing" in call_params["return_url"]
