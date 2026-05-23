@@ -19,7 +19,7 @@ from app.scopes import PaymentScope
 router = APIRouter(prefix="/payments/bank-transfer", tags=["bank-transfer"])
 
 
-@router.get("/", response_model=list[BankTransferResponse])
+@router.get("", response_model=list[BankTransferResponse])
 async def list_bank_transfers(
     transfer_status: BankTransferStatus | None = Query(None, alias="status"),
     page: int = 1,
@@ -40,7 +40,7 @@ async def list_bank_transfers(
     return [BankTransferResponse.model_validate(r) for r in results]
 
 
-@router.post("/", response_model=BankTransferResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=BankTransferResponse, status_code=status.HTTP_201_CREATED)
 async def create_bank_transfer_intent(
     payload: BankTransferRequest,
     current_user: CurrentUser = Depends(get_current_user),
@@ -58,6 +58,12 @@ async def create_bank_transfer_intent(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Cannot initiate payment for booking with status '{booking['status']}'.",
+        )
+
+    if booking.get("payment_method") != "bank_transfer":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="This booking was not created with bank transfer as the payment method.",
         )
 
     owner_id = UUID(booking["property_owner_id"])
