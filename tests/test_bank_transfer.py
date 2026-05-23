@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.deps import get_bookings_client, get_current_user, get_users_client
+from app.models import BankTransferStatus
 from app.routers.bank_transfer import router as bt_router
 
 from .factories import (
@@ -24,6 +25,16 @@ from .factories import (
 )
 
 CRUD_PATH = "app.routers.bank_transfer.bank_transfer_crud"
+BANK_CRUD_PATH = "app.routers.bank_transfer.owner_bank_account_crud"
+
+
+def _make_owner_bank_account():
+    m = MagicMock()
+    m.iban = OWNER_BANK["bank_iban"]
+    m.bic = OWNER_BANK["bank_bic"]
+    m.bank_name = OWNER_BANK["bank_name"]
+    m.account_holder = OWNER_BANK["account_holder"]
+    return m
 
 INTENT_ID = uuid4()
 
@@ -40,6 +51,8 @@ def _bank_transfer_response(**overrides) -> dict:
     base = dict(
         id=str(INTENT_ID),
         booking_id=str(BOOKING_ID),
+        user_id=str(CUSTOMER_ID),
+        property_owner_id=str(PROPERTY_OWNER_ID),
         status="pending",
         amount="40.00",
         currency="EUR",
@@ -85,8 +98,10 @@ def owner_client():
             user_id=str(CUSTOMER_ID),
             property_owner_id=str(PROPERTY_OWNER_ID),
             status="pending",
+            payment_method="bank_transfer",
         )
     )
+    mock_bc.confirm_booking = AsyncMock(return_value=True)
     app = _build_bt_app(make_property_owner(), bookings_client=mock_bc)
     return TestClient(app, raise_server_exceptions=True)
 
@@ -99,6 +114,7 @@ def customer_client():
             user_id=str(CUSTOMER_ID),
             property_owner_id=str(PROPERTY_OWNER_ID),
             status="pending",
+            payment_method="bank_transfer",
         )
     )
     app = _build_bt_app(make_customer(), bookings_client=mock_bc)
@@ -107,8 +123,9 @@ def customer_client():
 
 class TestCreateBankTransferIntent:
     def test_create_bank_transfer_intent(self, customer_client):
-        with patch(CRUD_PATH) as mock:
+        with patch(CRUD_PATH) as mock, patch(BANK_CRUD_PATH) as bank_mock:
             mock.create_intent = AsyncMock(return_value=_bank_transfer_response())
+            bank_mock.get_by_owner = AsyncMock(return_value=_make_owner_bank_account())
             resp = customer_client.post(
                 "/payments/bank-transfer/", json={"booking_id": str(BOOKING_ID)}
             )
@@ -124,12 +141,14 @@ class TestCreateBankTransferIntent:
                 user_id=str(CUSTOMER_ID),
                 property_owner_id=str(PROPERTY_OWNER_ID),
                 status="pending",
+                payment_method="bank_transfer",
             )
         )
         no_bank_uc = _make_users_client(owner_profile={"id": str(PROPERTY_OWNER_ID), "full_name": "Owner"})
         app = _build_bt_app(make_customer(), bookings_client=mock_bc, users_client=no_bank_uc)
         client = TestClient(app, raise_server_exceptions=True)
-        with patch(CRUD_PATH):
+        with patch(CRUD_PATH), patch(BANK_CRUD_PATH) as bank_mock:
+            bank_mock.get_by_owner = AsyncMock(return_value=None)
             resp = client.post(
                 "/payments/bank-transfer/", json={"booking_id": str(BOOKING_ID)}
             )
@@ -180,6 +199,8 @@ class TestConfirmBankTransfer:
                 return_value=MagicMock(
                     id=INTENT_ID,
                     property_owner_id=PROPERTY_OWNER_ID,
+                    status=BankTransferStatus.PENDING,
+                    booking_id=BOOKING_ID,
                 )
             )
             mock.confirm_intent = AsyncMock(
