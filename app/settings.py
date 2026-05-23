@@ -54,15 +54,16 @@ stripe_processing_fee_fixed_eur_cents = int(
 )
 
 # Subscription checkout return URLs
+# Use {locale} as a placeholder; payments-ms replaces it with the actual locale at checkout time.
 stripe_subscription_success_url = os.environ.get(
     "STRIPE_SUBSCRIPTION_SUCCESS_URL",
-    "http://localhost/en/owner/subscription?status=success",
+    "http://localhost/{locale}/subscription/success",
 )
 stripe_subscription_cancel_url = os.environ.get(
     "STRIPE_SUBSCRIPTION_CANCEL_URL",
-    "http://localhost/en/owner/subscription?status=cancelled",
+    "http://localhost/{locale}/pricing",
 )
 stripe_portal_return_url = os.environ.get(
     "STRIPE_PORTAL_RETURN_URL",
-    "http://localhost/en/owner/subscription",
+    "http://localhost/{locale}/pricing",
 )
