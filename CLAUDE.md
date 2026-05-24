@@ -130,6 +130,9 @@ Terminal states: `FAILED`, `REFUNDED`.
 | `STRIPE_SUCCESS_URL`              | `http://localhost/bookings?payment=success` | Frontend URL after successful payment          |
 | `STRIPE_CANCEL_URL`               | `http://localhost/bookings?payment=cancelled`| Frontend URL when customer cancels checkout   |
 | `STRIPE_CHECKOUT_EXPIRES_MINUTES` | `30`                                        | Minutes until Checkout Session expires         |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`     | `http://otel-collector:4317`                | OTLP gRPC endpoint                             |
+| `OTEL_SDK_DISABLED`               | `false`                                     | Set `true` to skip telemetry (CI / light dev)  |
+| `LOG_COLORIZE`                    | `false`                                     | Set `true` for ANSI-coloured logs in compose   |
 
 > **Gotcha — locale prefix in redirect URLs:** The frontend uses intlayer `prefix-all` mode, so bare `/bookings` redirects will 404. `STRIPE_SUCCESS_URL` / `STRIPE_CANCEL_URL` must include the locale prefix (e.g. `http://localhost/en/bookings?payment=success`). payments-ms injects the locale into the return URLs dynamically at checkout creation time using the `Accept-Language` header or a `locale` query param passed by the frontend.
 
