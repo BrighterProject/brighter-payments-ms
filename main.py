@@ -8,6 +8,7 @@ from ms_core import setup_app
 from app.logging import setup_logging
 from app.routers.connect import router as connect_router
 from app.settings import db_url, stripe_secret_key, stripe_webhook_secret
+from app.telemetry import setup_telemetry
 
 TORTOISE_ORM = {
     "connections": {"default": db_url},
@@ -39,6 +40,7 @@ application.add_middleware(
     allow_headers=["*"],
 )
 
+setup_telemetry(application, "brighter-payments-ms")
 setup_app(application, db_url, Path("app") / "routers", ["app.models"])
 
 application.include_router(connect_router)
