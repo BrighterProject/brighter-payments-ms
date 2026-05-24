@@ -1,4 +1,5 @@
 import os
+import sys
 
 db_url = os.environ.get("DB_URL", "sqlite://:memory:")
 
@@ -7,12 +8,21 @@ notifications_ms_url = os.environ.get("NOTIFICATIONS_MS_URL", "http://localhost:
 properties_ms_url = os.environ.get("PROPERTIES_MS_URL", "http://localhost:8001")
 
 # Stripe credentials — use test keys locally, live keys in production
-stripe_secret_key = os.environ.get("STRIPE_SECRET_KEY", "sk_test_placeholder")
-stripe_webhook_secret = os.environ.get("STRIPE_WEBHOOK_SECRET", "whsec_placeholder")
+stripe_secret_key = os.environ.get("STRIPE_SECRET_KEY", "")
+stripe_webhook_secret = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
 # Separate signing secret for the Stripe Connect / V2 webhook destination
 stripe_connect_webhook_secret = os.environ.get(
     "STRIPE_CONNECT_WEBHOOK_SECRET", "whsec_connect_placeholder"
 )
+
+_is_live_key = stripe_secret_key.startswith("sk_live_")
+if _is_live_key and not stripe_webhook_secret:
+    sys.exit("STRIPE_WEBHOOK_SECRET must be set when using a live Stripe key")
+
+if not stripe_secret_key:
+    stripe_secret_key = "sk_test_placeholder"
+if not stripe_webhook_secret:
+    stripe_webhook_secret = "whsec_placeholder"
 
 # Return URLs after Stripe Checkout — should be your frontend origin.
 # Use {locale} as a placeholder; payments-ms replaces it with the actual locale at checkout time.

@@ -29,7 +29,12 @@ from app.deps import (
     get_users_client,
     require_owner,
 )
-from app.schemas import CheckoutRequest, CheckoutResponse, PaymentCapabilitiesResponse, PaymentResponse
+from app.schemas import (
+    CheckoutRequest,
+    CheckoutResponse,
+    PaymentCapabilitiesResponse,
+    PaymentResponse,
+)
 from app.scopes import PaymentScope
 
 router = APIRouter(prefix="/payments", tags=["payments"])
@@ -196,7 +201,27 @@ async def create_checkout(
         "quantity": 1,
     })
 
-    session = stripe_client.v1.checkout.sessions.create(params=checkout_params)
+    try:
+        session = stripe_client.v1.checkout.sessions.create(
+            params=checkout_params,
+            options={"idempotency_key": f"checkout-{payload.booking_id}"},
+        )
+    except stripe.StripeError as exc:
+        logger.error("stripe checkout session create failed: {}", exc)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Payment provider error. Please try again.",
+        ) from exc
+
+    logger.info(
+        "stripe checkout session created | session={} booking={} amount={} "
+        "currency={} stripe_request_id={}",
+        session.id,
+        payload.booking_id,
+        amount_cents,
+        currency,
+        getattr(getattr(session, "last_response", None), "request_id", "n/a"),
+    )
 
     payment = await payment_crud.create(
         booking_id=payload.booking_id,
@@ -344,8 +369,32 @@ async def refund_booking_payment(
             detail="Cannot refund: no payment intent on record.",
         )
 
-    stripe_client.v1.refunds.create(
-        params={"payment_intent": payment.stripe_payment_intent_id}
+    try:
+        refund = stripe_client.v1.refunds.create(
+            params={"payment_intent": payment.stripe_payment_intent_id}
+        )
+    except stripe.InvalidRequestError as exc:
+        logger.warning(
+            "stripe refund rejected pi={}: {}", payment.stripe_payment_intent_id, exc
+        )
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc.user_message or exc),
+        ) from exc
+    except stripe.StripeError as exc:
+        logger.error(
+            "stripe refund failed pi={}: {}", payment.stripe_payment_intent_id, exc
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Payment provider error. Please try again.",
+        ) from exc
+
+    logger.info(
+        "stripe refund issued | refund={} pi={} booking={}",
+        refund.id,
+        payment.stripe_payment_intent_id,
+        booking_id,
     )
 
     updated = await payment_crud.mark_refunded(payment.stripe_payment_intent_id)
@@ -409,6 +458,8 @@ async def stripe_webhook(
         await _handle_session_expired(obj, bookings_client)
     elif event.type == "charge.refunded":
         await _handle_charge_refunded(obj)
+    elif event.type == "payment_intent.payment_failed":
+        await _handle_payment_intent_failed(obj)
     elif event.type in (
         "customer.subscription.created",
         "customer.subscription.updated",
@@ -601,6 +652,19 @@ async def _handle_charge_refunded(charge) -> None:  # type: ignore[type-arg]
     payment_intent_id = charge.payment_intent
     if payment_intent_id:
         await payment_crud.mark_refunded(payment_intent_id)
+
+
+async def _handle_payment_intent_failed(pi) -> None:  # type: ignore[type-arg]
+    """
+    Card declined inside an active Checkout Session.
+    The customer may retry with a different card, so we don't cancel the booking.
+    The session.expired handler does the real cleanup when the session times out.
+    """
+    logger.warning(
+        "payment_intent.payment_failed pi={} reason={}",
+        pi.id,
+        getattr(getattr(pi, "last_payment_error", None), "code", "unknown"),
+    )
 
 
 async def _handle_subscription_updated(  # type: ignore[type-arg]

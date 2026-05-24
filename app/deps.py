@@ -118,7 +118,7 @@ def get_stripe_client() -> StripeClient:
     Returns a cached Stripe client initialised with the secret key from settings.
     Override via app.dependency_overrides[get_stripe_client] in tests.
     """
-    return StripeClient(settings.stripe_secret_key)
+    return StripeClient(settings.stripe_secret_key, stripe_version="2025-04-30.basil")
 
 
 # ---------------------------------------------------------------------------
