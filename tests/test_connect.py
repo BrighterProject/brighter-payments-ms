@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from stripe import AccountLink
 
 from app.deps import get_current_user, get_stripe_client
-from app.routers.connect import router as connect_router
+from app.routers._connect import router as connect_router
 
 from .factories import PROPERTY_OWNER_ID, make_property_owner
 
@@ -77,7 +77,7 @@ def anon_app():
 
 def test_status_not_connected(owner_client):
     with patch(
-        "app.routers.connect.connect_crud.get_by_owner", AsyncMock(return_value=None)
+        "app.routers._connect.connect_crud.get_by_owner", AsyncMock(return_value=None)
     ):
         resp = owner_client.get("/payments/connect/status")
     assert resp.status_code == 200
@@ -102,7 +102,7 @@ def test_status_connected_verified(owner_client):
     mock_account.requirements_eventually_due = False
 
     with patch(
-        "app.routers.connect.connect_crud.get_by_owner",
+        "app.routers._connect.connect_crud.get_by_owner",
         AsyncMock(return_value=mock_account),
     ):
         resp = owner_client.get("/payments/connect/status")
@@ -127,7 +127,7 @@ def test_status_connected_pending(owner_client):
     mock_account.requirements_eventually_due = False
 
     with patch(
-        "app.routers.connect.connect_crud.get_by_owner",
+        "app.routers._connect.connect_crud.get_by_owner",
         AsyncMock(return_value=mock_account),
     ):
         resp = owner_client.get("/payments/connect/status")
@@ -150,7 +150,7 @@ def test_status_shows_requirements_outstanding(owner_client):
     mock_account.requirements_eventually_due = False
 
     with patch(
-        "app.routers.connect.connect_crud.get_by_owner",
+        "app.routers._connect.connect_crud.get_by_owner",
         AsyncMock(return_value=mock_account),
     ):
         resp = owner_client.get("/payments/connect/status")
@@ -182,11 +182,11 @@ def test_onboard_creates_new_account_when_not_connected(owner_client):
 
     with (
         patch(
-            "app.routers.connect.connect_crud.get_by_owner",
+            "app.routers._connect.connect_crud.get_by_owner",
             AsyncMock(return_value=None),
         ),
         patch(
-            "app.routers.connect.connect_crud.upsert",
+            "app.routers._connect.connect_crud.upsert",
             AsyncMock(return_value=MagicMock()),
         ),
         patch.object(
@@ -220,7 +220,7 @@ def test_onboard_reuses_existing_account_when_connected(owner_client):
 
     with (
         patch(
-            "app.routers.connect.connect_crud.get_by_owner",
+            "app.routers._connect.connect_crud.get_by_owner",
             AsyncMock(return_value=existing),
         ),
         patch.object(
@@ -255,11 +255,11 @@ def test_disconnect_removes_account(owner_client):
 
     with (
         patch(
-            "app.routers.connect.connect_crud.get_by_owner",
+            "app.routers._connect.connect_crud.get_by_owner",
             AsyncMock(return_value=mock_account),
         ),
         patch(
-            "app.routers.connect.connect_crud.delete_by_owner",
+            "app.routers._connect.connect_crud.delete_by_owner",
             AsyncMock(return_value=True),
         ),
     ):
@@ -270,7 +270,7 @@ def test_disconnect_removes_account(owner_client):
 
 def test_disconnect_404_when_not_connected(owner_client):
     with patch(
-        "app.routers.connect.connect_crud.get_by_owner",
+        "app.routers._connect.connect_crud.get_by_owner",
         AsyncMock(return_value=None),
     ):
         resp = owner_client.delete("/payments/connect")
@@ -295,10 +295,10 @@ def test_disconnect_still_removes_if_stripe_delete_fails(owner_client):
 
     with (
         patch(
-            "app.routers.connect.connect_crud.get_by_owner",
+            "app.routers._connect.connect_crud.get_by_owner",
             AsyncMock(return_value=mock_account),
         ),
-        patch("app.routers.connect.connect_crud.delete_by_owner", delete_mock),
+        patch("app.routers._connect.connect_crud.delete_by_owner", delete_mock),
     ):
         resp = client.delete("/payments/connect")
 
@@ -514,11 +514,11 @@ class TestConnectWebhook:
 
         with (
             patch(
-                "app.routers.connect.connect_crud.update_requirements",
+                "app.routers._connect.connect_crud.update_requirements",
                 AsyncMock(),
             ),
             patch(
-                "app.routers.connect.connect_crud.update_transfers_active",
+                "app.routers._connect.connect_crud.update_transfers_active",
                 AsyncMock(),
             ) as mock_update,
         ):
@@ -541,10 +541,10 @@ class TestConnectWebhook:
 
         with (
             patch(
-                "app.routers.connect.connect_crud.update_requirements", AsyncMock()
+                "app.routers._connect.connect_crud.update_requirements", AsyncMock()
             ),
             patch(
-                "app.routers.connect.connect_crud.update_transfers_active", AsyncMock()
+                "app.routers._connect.connect_crud.update_transfers_active", AsyncMock()
             ) as mock_update,
         ):
             resp = client.post(
@@ -585,11 +585,11 @@ class TestConnectWebhook:
 
         with (
             patch(
-                "app.routers.connect.connect_crud.update_requirements",
+                "app.routers._connect.connect_crud.update_requirements",
                 AsyncMock(),
             ) as mock_update,
             patch(
-                "app.routers.connect.connect_crud.update_transfers_active",
+                "app.routers._connect.connect_crud.update_transfers_active",
                 AsyncMock(),
             ),
         ):
@@ -613,10 +613,10 @@ class TestConnectWebhook:
 
         with (
             patch(
-                "app.routers.connect.connect_crud.update_requirements", AsyncMock()
+                "app.routers._connect.connect_crud.update_requirements", AsyncMock()
             ) as mock_update,
             patch(
-                "app.routers.connect.connect_crud.update_transfers_active", AsyncMock()
+                "app.routers._connect.connect_crud.update_transfers_active", AsyncMock()
             ),
         ):
             resp = client.post(
