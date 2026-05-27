@@ -1,4 +1,5 @@
 import os
+import sys
 
 db_url = os.environ.get("DB_URL", "sqlite://:memory:")
 
@@ -7,21 +8,31 @@ notifications_ms_url = os.environ.get("NOTIFICATIONS_MS_URL", "http://localhost:
 properties_ms_url = os.environ.get("PROPERTIES_MS_URL", "http://localhost:8001")
 
 # Stripe credentials — use test keys locally, live keys in production
-stripe_secret_key = os.environ.get("STRIPE_SECRET_KEY", "sk_test_placeholder")
-stripe_webhook_secret = os.environ.get("STRIPE_WEBHOOK_SECRET", "whsec_placeholder")
+stripe_secret_key = os.environ.get("STRIPE_SECRET_KEY", "")
+stripe_webhook_secret = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
 # Separate signing secret for the Stripe Connect / V2 webhook destination
 stripe_connect_webhook_secret = os.environ.get(
     "STRIPE_CONNECT_WEBHOOK_SECRET", "whsec_connect_placeholder"
 )
 
-# Return URLs after Stripe Checkout — should be your frontend origin
+_is_live_key = stripe_secret_key.startswith("sk_live_")
+if _is_live_key and not stripe_webhook_secret:
+    sys.exit("STRIPE_WEBHOOK_SECRET must be set when using a live Stripe key")
+
+if not stripe_secret_key:
+    stripe_secret_key = "sk_test_placeholder"
+if not stripe_webhook_secret:
+    stripe_webhook_secret = "whsec_placeholder"
+
+# Return URLs after Stripe Checkout — should be your frontend origin.
+# Use {locale} as a placeholder; payments-ms replaces it with the actual locale at checkout time.
 stripe_success_url = os.environ.get(
     "STRIPE_SUCCESS_URL",
-    "http://localhost/bookings?payment=success",
+    "http://localhost/{locale}/bookings/success",
 )
 stripe_cancel_url = os.environ.get(
     "STRIPE_CANCEL_URL",
-    "http://localhost/bookings?payment=cancelled",
+    "http://localhost/{locale}/bookings/cancel",
 )
 
 # How long the Stripe Checkout page stays valid before expiring (minutes)
@@ -41,4 +52,27 @@ stripe_connect_settings_url = os.environ.get(
 # Platform fee charged on each payment routed to a connected account (percentage)
 stripe_platform_fee_percent = float(
     os.environ.get("STRIPE_PLATFORM_FEE_PERCENT", "10.0")
+)
+
+users_ms_url = os.environ.get("USERS_MS_URL", "http://localhost:8000")
+
+# Stripe processing fee passed to customer on card payments
+stripe_processing_fee_pct = float(os.environ.get("STRIPE_PROCESSING_FEE_PCT", "1.5"))
+stripe_processing_fee_fixed_eur_cents = int(
+    os.environ.get("STRIPE_PROCESSING_FEE_FIXED_EUR_CENTS", "25")
+)
+
+# Subscription checkout return URLs
+# Use {locale} as a placeholder; payments-ms replaces it with the actual locale at checkout time.
+stripe_subscription_success_url = os.environ.get(
+    "STRIPE_SUBSCRIPTION_SUCCESS_URL",
+    "http://localhost/{locale}/subscription/success",
+)
+stripe_subscription_cancel_url = os.environ.get(
+    "STRIPE_SUBSCRIPTION_CANCEL_URL",
+    "http://localhost/{locale}/pricing",
+)
+stripe_portal_return_url = os.environ.get(
+    "STRIPE_PORTAL_RETURN_URL",
+    "http://localhost/{locale}/pricing",
 )

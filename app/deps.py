@@ -118,7 +118,7 @@ def get_stripe_client() -> StripeClient:
     Returns a cached Stripe client initialised with the secret key from settings.
     Override via app.dependency_overrides[get_stripe_client] in tests.
     """
-    return StripeClient(settings.stripe_secret_key)
+    return StripeClient(settings.stripe_secret_key, stripe_version="2025-04-30.basil")
 
 
 # ---------------------------------------------------------------------------
@@ -187,6 +187,18 @@ class BookingsClient:
         except (httpx.RequestError, Exception):
             return False
 
+    async def confirm_booking(self, booking_id: UUID, caller: CurrentUser) -> bool:
+        """Confirm a booking after a bank transfer is verified. Silently returns False on error."""
+        try:
+            resp = await self._client.patch(
+                f"/bookings/{booking_id}/status",
+                json={"status": "confirmed"},
+                headers=self._headers(caller),
+            )
+            return resp.status_code < 400
+        except (httpx.RequestError, Exception):
+            return False
+
 
 _bookings_client = BookingsClient()
 
@@ -223,7 +235,7 @@ class NotificationsClient:
         }
 
     async def send(
-        self, *, to: str, notification_type: str, data: dict | None = None
+        self, *, to: str, notification_type: str, data: dict | None = None, locale: str | None = None
     ) -> None:
         try:
             logger.debug("Sending notification from payments-ms | type={} to={} data={}", notification_type, to, data)
@@ -234,6 +246,7 @@ class NotificationsClient:
                     "to": to,
                     "data": data or {},
                     "triggered_by": "payments-ms",
+                    "locale": locale,
                 },
                 headers=self._headers(),
             )
@@ -301,3 +314,80 @@ _properties_client = PropertiesClient()
 
 def get_properties_client() -> PropertiesClient:
     return _properties_client
+
+
+# ---------------------------------------------------------------------------
+# UsersClient — fetch user profiles from users-ms
+# ---------------------------------------------------------------------------
+
+
+@lru_cache(maxsize=1)
+def _get_users_http_client() -> httpx.AsyncClient:
+    return httpx.AsyncClient(
+        base_url=settings.users_ms_url,
+        timeout=httpx.Timeout(5.0),
+        follow_redirects=True,
+    )
+
+
+class UsersClient:
+    @property
+    def _client(self) -> httpx.AsyncClient:
+        return _get_users_http_client()
+
+    def _headers(self) -> dict[str, str]:
+        admin = _get_system_admin()
+        return {
+            "X-User-Id": str(admin.id),
+            "X-Username": quote(admin.username),
+            "X-User-Scopes": " ".join(admin.scopes) + " admin:users:read",
+        }
+
+    async def get_user(self, user_id: UUID) -> dict | None:
+        """Return user dict or None on 404."""
+        try:
+            resp = await self._client.get(
+                f"/users/{user_id}", headers=self._headers()
+            )
+            if resp.status_code == 404:
+                return None
+            if resp.status_code >= 400:
+                logger.warning("UsersClient: GET /users/{} returned {}", user_id, resp.status_code)
+                return None
+            return resp.json()
+        except Exception as exc:
+            logger.warning("UsersClient: failed to fetch user {} — {}", user_id, exc)
+            return None
+
+    async def grant_role(self, user_id: UUID, role: str = "owner") -> None:
+        """Grant a named role to a user via users-ms. Logs at ERROR on failure; never raises."""
+        try:
+            resp = await self._client.post(
+                f"/users/{user_id}/grant-role",
+                json={"role": role},
+                headers=self._headers(),
+            )
+            if resp.status_code not in (200, 204):
+                logger.error(
+                    "UsersClient.grant_role: failed for user_id={} role={} — HTTP {} {}",
+                    user_id,
+                    role,
+                    resp.status_code,
+                    resp.text,
+                )
+                # TODO: trigger high-priority alert (e.g. Sentry capture_exception with level="fatal")
+                # so ops can manually grant the role. Include owner_id in the alert payload.
+        except Exception as exc:
+            logger.error(
+                "UsersClient.grant_role: exception for user_id={} role={} — {}",
+                user_id,
+                role,
+                exc,
+            )
+
+
+_users_client = UsersClient()
+
+
+def get_users_client() -> UsersClient:
+    return _users_client

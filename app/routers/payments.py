@@ -5,18 +5,19 @@ from typing import Literal, cast
 from uuid import UUID
 
 import stripe
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from loguru import logger
 from stripe import StripeClient
 
 from app import settings
-from app.crud import payment_crud
+from app.crud import owner_bank_account_crud, payment_crud, subscription_crud
 from app.crud_connect import connect_crud
 from app.deps import (
     BookingsClient,
     CurrentUser,
     NotificationsClient,
     PropertiesClient,
+    UsersClient,
     _get_system_admin,
     can_admin_delete_payment,
     can_read_payment,
@@ -25,11 +26,43 @@ from app.deps import (
     get_notifications_client,
     get_properties_client,
     get_stripe_client,
+    get_users_client,
+    require_owner,
 )
-from app.schemas import CheckoutRequest, CheckoutResponse, PaymentResponse
+from app.schemas import (
+    CheckoutRequest,
+    CheckoutResponse,
+    PaymentCapabilitiesResponse,
+    PaymentResponse,
+)
 from app.scopes import PaymentScope
 
 router = APIRouter(prefix="/payments", tags=["payments"])
+
+
+# ---------------------------------------------------------------------------
+# GET /payments/capabilities
+# ---------------------------------------------------------------------------
+
+
+@router.get("/capabilities", response_model=PaymentCapabilitiesResponse)
+async def get_payment_capabilities(
+    current_user: CurrentUser = Depends(require_owner),
+) -> PaymentCapabilitiesResponse:
+    """Return which payment methods the authenticated owner may enable on their properties."""
+    stripe_account = await connect_crud.get_by_owner(current_user.id)
+    bank_account = await owner_bank_account_crud.get_by_owner(current_user.id)
+
+    can_accept_card = (
+        stripe_account is not None
+        and stripe_account.transfers_active
+        and not stripe_account.requirements_outstanding
+    )
+
+    return PaymentCapabilitiesResponse(
+        can_accept_card=can_accept_card,
+        can_accept_bank_transfer=bank_account is not None,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -85,18 +118,23 @@ async def create_checkout(
             detail=f"Cannot pay for a booking with status '{booking['status']}'.",
         )
 
+    if booking.get("payment_method") not in (None, "card"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="This booking was not created with card as the payment method.",
+        )
+
     # Amount fetched from booking — never trust client-supplied values
     total_price = Decimal(str(booking["total_price"]))
     currency = booking.get("currency", "EUR").lower()
     amount_cents = int(total_price * 100)
     locale = payload.locale or "en"
 
-    # Append a placeholder that Stripe replaces with the real session ID
     success_url = (
-        settings.stripe_success_url.replace("/bookings", f"/{locale}/bookings")
-        + "&session_id={CHECKOUT_SESSION_ID}"
+        settings.stripe_success_url.replace("{locale}", locale)
+        + "?session_id={CHECKOUT_SESSION_ID}"
     )
-    cancel_url = settings.stripe_cancel_url.replace("/bookings", f"/{locale}/bookings")
+    cancel_url = settings.stripe_cancel_url.replace("{locale}", locale)
 
     expires_at = datetime.now(UTC) + timedelta(
         minutes=settings.stripe_checkout_expires_minutes
@@ -109,14 +147,11 @@ async def create_checkout(
     product_name = _product_names.get(payload.locale or "", "Property booking")
 
     # Route payment to the owner's connected Stripe account when available
+    # No platform fee — the subscription model is the revenue source
     owner_connect = await connect_crud.get_by_owner(UUID(booking["property_owner_id"]))
     payment_intent_data: dict = {}
     if owner_connect is not None and owner_connect.transfers_active:
-        platform_fee_cents = int(
-            amount_cents * settings.stripe_platform_fee_percent / 100
-        )
         payment_intent_data = {
-            "application_fee_amount": platform_fee_cents,
             "transfer_data": {"destination": owner_connect.stripe_account_id},
         }
 
@@ -153,7 +188,40 @@ async def create_checkout(
     if payment_intent_data:
         checkout_params["payment_intent_data"] = payment_intent_data
 
-    session = stripe_client.v1.checkout.sessions.create(params=checkout_params)
+    # Add Stripe processing fee as a separate line item — passed to the customer
+    fee_pct = Decimal(str(settings.stripe_processing_fee_pct)) / 100
+    fee_fixed = Decimal(settings.stripe_processing_fee_fixed_eur_cents) / 100
+    stripe_fee = (total_price * fee_pct + fee_fixed).quantize(Decimal("0.01"))
+    checkout_params["line_items"].append({
+        "price_data": {
+            "currency": currency,
+            "product_data": {"name": "Payment processing fee"},
+            "unit_amount": int(stripe_fee * 100),
+        },
+        "quantity": 1,
+    })
+
+    try:
+        session = stripe_client.v1.checkout.sessions.create(
+            params=checkout_params,
+            options={"idempotency_key": f"checkout-{payload.booking_id}"},
+        )
+    except stripe.StripeError as exc:
+        logger.error("stripe checkout session create failed: {}", exc)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Payment provider error. Please try again.",
+        ) from exc
+
+    logger.info(
+        "stripe checkout session created | session={} booking={} amount={} "
+        "currency={} stripe_request_id={}",
+        session.id,
+        payload.booking_id,
+        amount_cents,
+        currency,
+        getattr(getattr(session, "last_response", None), "request_id", "n/a"),
+    )
 
     payment = await payment_crud.create(
         booking_id=payload.booking_id,
@@ -162,6 +230,7 @@ async def create_checkout(
         stripe_session_id=session.id,
         amount=total_price,
         currency=booking.get("currency", "EUR").upper(),
+        locale=locale,
     )
 
     return CheckoutResponse(
@@ -228,6 +297,35 @@ async def get_payment_by_booking(
 
 
 # ---------------------------------------------------------------------------
+# GET /payments/session/{session_id}
+# ---------------------------------------------------------------------------
+
+
+@router.get("/session/{session_id}", response_model=PaymentResponse)
+async def get_payment_by_session(
+    session_id: str,
+    current_user: CurrentUser = Depends(can_read_payment),
+) -> PaymentResponse:
+    """Return a payment by its Stripe Checkout Session ID (used by the success page to poll status)."""
+    payment = await payment_crud.get_by_session(session_id)
+    if payment is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Payment not found.",
+        )
+    is_admin = (
+        PaymentScope.ADMIN in current_user.scopes
+        or PaymentScope.ADMIN_READ in current_user.scopes
+    )
+    if not is_admin and payment.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only view your own payments.",
+        )
+    return PaymentResponse.model_validate(payment)
+
+
+# ---------------------------------------------------------------------------
 # POST /payments/booking/{booking_id}/refund
 # ---------------------------------------------------------------------------
 
@@ -271,8 +369,32 @@ async def refund_booking_payment(
             detail="Cannot refund: no payment intent on record.",
         )
 
-    stripe_client.v1.refunds.create(
-        params={"payment_intent": payment.stripe_payment_intent_id}
+    try:
+        refund = stripe_client.v1.refunds.create(
+            params={"payment_intent": payment.stripe_payment_intent_id}
+        )
+    except stripe.InvalidRequestError as exc:
+        logger.warning(
+            "stripe refund rejected pi={}: {}", payment.stripe_payment_intent_id, exc
+        )
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc.user_message or exc),
+        ) from exc
+    except stripe.StripeError as exc:
+        logger.error(
+            "stripe refund failed pi={}: {}", payment.stripe_payment_intent_id, exc
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Payment provider error. Please try again.",
+        ) from exc
+
+    logger.info(
+        "stripe refund issued | refund={} pi={} booking={}",
+        refund.id,
+        payment.stripe_payment_intent_id,
+        booking_id,
     )
 
     updated = await payment_crud.mark_refunded(payment.stripe_payment_intent_id)
@@ -293,10 +415,12 @@ async def refund_booking_payment(
 @router.post("/webhook")
 async def stripe_webhook(
     request: Request,
+    background_tasks: BackgroundTasks,
     bookings_client: BookingsClient = Depends(get_bookings_client),
     stripe_client: StripeClient = Depends(get_stripe_client),
     notifications_client: NotificationsClient = Depends(get_notifications_client),
     properties_client: PropertiesClient = Depends(get_properties_client),
+    users_client: UsersClient = Depends(get_users_client),
 ) -> dict:
     """
     Stripe webhook endpoint.
@@ -334,6 +458,15 @@ async def stripe_webhook(
         await _handle_session_expired(obj, bookings_client)
     elif event.type == "charge.refunded":
         await _handle_charge_refunded(obj)
+    elif event.type == "payment_intent.payment_failed":
+        await _handle_payment_intent_failed(obj)
+    elif event.type in (
+        "customer.subscription.created",
+        "customer.subscription.updated",
+    ):
+        await _handle_subscription_updated(obj, users_client, notifications_client, background_tasks)
+    elif event.type == "customer.subscription.deleted":
+        await _handle_subscription_deleted(obj)
 
     return {"received": True}
 
@@ -365,7 +498,8 @@ async def _handle_session_completed(  # type: ignore[type-arg]
 ) -> None:
     """Mark payment as PAID once Stripe confirms the Checkout Session."""
     payment_intent_id = session.payment_intent or ""
-    await payment_crud.mark_paid(session.id, payment_intent_id)
+    payment = await payment_crud.mark_paid(session.id, payment_intent_id)
+    payment_locale = payment.locale if payment else "en"
 
     guest_email: str | None = getattr(
         getattr(session, "customer_details", None), "email", None
@@ -389,6 +523,7 @@ async def _handle_session_completed(  # type: ignore[type-arg]
             to=guest_email,
             notification_type="payment_receipt",
             data=receipt_data,
+            locale=payment_locale,
         )
     )
 
@@ -517,6 +652,88 @@ async def _handle_charge_refunded(charge) -> None:  # type: ignore[type-arg]
     payment_intent_id = charge.payment_intent
     if payment_intent_id:
         await payment_crud.mark_refunded(payment_intent_id)
+
+
+async def _handle_payment_intent_failed(pi) -> None:  # type: ignore[type-arg]
+    """
+    Card declined inside an active Checkout Session.
+    The customer may retry with a different card, so we don't cancel the booking.
+    The session.expired handler does the real cleanup when the session times out.
+    """
+    logger.warning(
+        "payment_intent.payment_failed pi={} reason={}",
+        pi.id,
+        getattr(getattr(pi, "last_payment_error", None), "code", "unknown"),
+    )
+
+
+async def _handle_subscription_updated(  # type: ignore[type-arg]
+    subscription,
+    users_client: UsersClient,
+    notifications_client: NotificationsClient,
+    background_tasks: BackgroundTasks,
+) -> None:
+    from app.models import SubscriptionStatus
+
+    owner_id_str = getattr(getattr(subscription, "metadata", None), "owner_id", None)
+    if not owner_id_str:
+        return
+
+    stripe_sub_id = getattr(subscription, "id", None)
+    stripe_customer_id = getattr(subscription, "customer", None)
+    raw_status = getattr(subscription, "status", "incomplete")
+    try:
+        new_status = SubscriptionStatus(raw_status)
+    except ValueError:
+        new_status = SubscriptionStatus.INCOMPLETE
+
+    period_end_ts = getattr(subscription, "current_period_end", None)
+    current_period_end = (
+        datetime.fromtimestamp(period_end_ts, tz=UTC) if period_end_ts else None
+    )
+
+    items_data = getattr(getattr(subscription, "items", None), "data", [])
+    first_item = items_data[0] if items_data else None
+    price_obj = getattr(first_item, "price", None) if first_item else None
+    plan_slug = getattr(getattr(price_obj, "metadata", None), "plan_slug", None)
+    plan = await subscription_crud.get_plan_by_slug(plan_slug) if plan_slug else None
+    if plan is None:
+        logger.warning(
+            "subscription_webhook: unknown plan_slug {} for owner {}", plan_slug, owner_id_str
+        )
+        return
+
+    await subscription_crud.upsert_subscription(
+        owner_id=UUID(owner_id_str),
+        plan_id=plan.id,
+        status=new_status,
+        stripe_customer_id=stripe_customer_id,
+        stripe_subscription_id=stripe_sub_id,
+        current_period_end=current_period_end,
+    )
+
+    if new_status in (SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING):
+        user = await users_client.get_user(UUID(owner_id_str))
+        owner_email: str | None = user.get("email") if user else None
+        owner_locale: str = user.get("locale", "bg") if user else "bg"
+
+        await users_client.grant_role(UUID(owner_id_str))
+
+        if owner_email:
+            background_tasks.add_task(
+                notifications_client.send,
+                to=owner_email,
+                notification_type="owner_welcome",
+                data={"owner_id": owner_id_str},
+                locale=owner_locale,
+            )
+
+
+async def _handle_subscription_deleted(subscription) -> None:  # type: ignore[type-arg]
+    owner_id_str = getattr(getattr(subscription, "metadata", None), "owner_id", None)
+    if not owner_id_str:
+        return
+    await subscription_crud.cancel_subscription(UUID(owner_id_str))
 
 
 # ---------------------------------------------------------------------------

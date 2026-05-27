@@ -1,12 +1,22 @@
 from __future__ import annotations
 
+from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
 from ms_core import CRUD
 
-from app.models import Payment, PaymentStatus
-from app.schemas import PaymentResponse
+from app.models import (
+    BankTransferPayment,
+    BankTransferStatus,
+    OwnerBankAccount,
+    OwnerSubscription,
+    Payment,
+    PaymentStatus,
+    SubscriptionPlan,
+    SubscriptionStatus,
+)
+from app.schemas import BankTransferResponse, OwnerBankAccountResponse, PaymentResponse
 
 
 class PaymentCRUD(CRUD[Payment, PaymentResponse]):  # type: ignore
@@ -19,6 +29,7 @@ class PaymentCRUD(CRUD[Payment, PaymentResponse]):  # type: ignore
         stripe_session_id: str,
         amount: Decimal,
         currency: str,
+        locale: str = "en",
     ) -> PaymentResponse:
         inst = await Payment.create(
             booking_id=booking_id,
@@ -27,6 +38,7 @@ class PaymentCRUD(CRUD[Payment, PaymentResponse]):  # type: ignore
             stripe_session_id=stripe_session_id,
             amount=amount,
             currency=currency,
+            locale=locale,
         )
         return PaymentResponse.model_validate(inst)
 
@@ -99,3 +111,168 @@ class PaymentCRUD(CRUD[Payment, PaymentResponse]):  # type: ignore
 
 
 payment_crud = PaymentCRUD(Payment, PaymentResponse)
+
+
+class SubscriptionCRUD:
+    """CRUD operations for subscription plans and owner subscriptions."""
+
+    async def list_plans(self) -> list[SubscriptionPlan]:
+        """Return all active subscription plans."""
+        return await SubscriptionPlan.filter(is_active=True).all()
+
+    async def get_plan_by_slug(self, slug: str) -> SubscriptionPlan | None:
+        return await SubscriptionPlan.get_or_none(slug=slug)
+
+    async def get_owner_subscription(self, owner_id: UUID) -> OwnerSubscription | None:
+        return await OwnerSubscription.get_or_none(owner_id=owner_id).select_related("plan")
+
+    async def get_by_stripe_subscription_id(self, stripe_sub_id: str) -> OwnerSubscription | None:
+        return await OwnerSubscription.get_or_none(
+            stripe_subscription_id=stripe_sub_id
+        ).select_related("plan")
+
+    async def upsert_subscription(
+        self,
+        owner_id: UUID,
+        plan_id: UUID,
+        status: SubscriptionStatus,
+        stripe_customer_id: str | None = None,
+        stripe_subscription_id: str | None = None,
+        current_period_end: datetime | None = None,
+    ) -> OwnerSubscription:
+        sub, _ = await OwnerSubscription.get_or_create(owner_id=owner_id)
+        sub.plan_id = plan_id
+        sub.status = status
+        if stripe_customer_id:
+            sub.stripe_customer_id = stripe_customer_id
+        if stripe_subscription_id:
+            sub.stripe_subscription_id = stripe_subscription_id
+        if current_period_end:
+            sub.current_period_end = current_period_end
+        await sub.save()
+        return await OwnerSubscription.get(id=sub.id).select_related("plan")
+
+    async def cancel_subscription(self, owner_id: UUID) -> OwnerSubscription | None:
+        sub = await self.get_owner_subscription(owner_id)
+        if sub:
+            sub.status = SubscriptionStatus.CANCELLED
+            sub.cancelled_at = datetime.utcnow()
+            await sub.save()
+        return sub
+
+    async def list_all(self) -> list[OwnerSubscription]:
+        """Return all owner subscriptions with plan data (admin use)."""
+        return await OwnerSubscription.all().select_related("plan").order_by("-created_at")
+
+    async def can_add_listing(self, owner_id: UUID) -> bool:
+        """Return True if owner has an active subscription with quota remaining."""
+        sub = await self.get_owner_subscription(owner_id)
+        if sub is None or sub.status not in (SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING):
+            return False
+        if sub.plan.max_listings == -1:
+            return True
+        active_count = await _count_owner_listings(owner_id)
+        return active_count < sub.plan.max_listings
+
+
+async def _count_owner_listings(owner_id: UUID) -> int:
+    """Cross-service stub — replaced by PaymentsClient call in properties-ms Task 4."""
+    return 0
+
+
+subscription_crud = SubscriptionCRUD()
+
+
+class BankTransferCRUD:
+    """CRUD operations for bank-transfer payment intents."""
+
+    async def create_intent(
+        self,
+        booking_id: UUID,
+        user_id: UUID,
+        property_owner_id: UUID,
+        amount: Decimal,
+        currency: str,
+        bank_iban: str,
+        bank_bic: str,
+        bank_name: str,
+        account_holder: str,
+    ) -> BankTransferPayment:
+        reference = f"BK-{str(booking_id)[:8].upper()}"
+        return await BankTransferPayment.create(
+            booking_id=booking_id,
+            user_id=user_id,
+            property_owner_id=property_owner_id,
+            amount=amount,
+            currency=currency,
+            bank_iban=bank_iban,
+            bank_bic=bank_bic,
+            bank_name=bank_name,
+            account_holder=account_holder,
+            reference=reference,
+        )
+
+    async def get_by_id(self, intent_id: UUID) -> BankTransferPayment | None:
+        """Return a bank transfer intent by primary key."""
+        return await BankTransferPayment.get_or_none(id=intent_id)
+
+    async def confirm_intent(self, intent_id: UUID) -> BankTransferPayment | None:
+        """Mark the intent as confirmed (owner received the transfer)."""
+        intent = await self.get_by_id(intent_id)
+        if intent:
+            intent.status = BankTransferStatus.CONFIRMED
+            await intent.save()
+        return intent
+
+    async def cancel_intent(self, intent_id: UUID) -> BankTransferPayment | None:
+        """Mark the intent as cancelled."""
+        intent = await self.get_by_id(intent_id)
+        if intent:
+            intent.status = BankTransferStatus.CANCELLED
+            await intent.save()
+        return intent
+
+    async def list_by_status(
+        self,
+        status: BankTransferStatus | None = None,
+        owner_id: UUID | None = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> list[BankTransferPayment]:
+        """List bank transfer intents, optionally filtered by status and/or owner."""
+        qs = BankTransferPayment.all()
+        if status is not None:
+            qs = qs.filter(status=status)
+        if owner_id is not None:
+            qs = qs.filter(property_owner_id=owner_id)
+        offset = (page - 1) * page_size
+        return await qs.order_by("-created_at").offset(offset).limit(page_size)
+
+
+bank_transfer_crud = BankTransferCRUD()
+
+
+class OwnerBankAccountCRUD:
+    """CRUD operations for owner bank accounts used in bank-transfer payments."""
+
+    async def upsert(
+        self,
+        owner_id: UUID,
+        iban: str,
+        account_holder: str,
+        bic: str | None = None,
+        bank_name: str | None = None,
+    ) -> OwnerBankAccountResponse:
+        account, _ = await OwnerBankAccount.get_or_create(dict(iban=iban), owner_id=owner_id)
+        account.account_holder = account_holder
+        account.bic = bic
+        account.bank_name = bank_name
+        await account.save()
+        return OwnerBankAccountResponse.model_validate(account)
+
+    async def get_by_owner(self, owner_id: UUID) -> OwnerBankAccountResponse | None:
+        account = await OwnerBankAccount.get_or_none(owner_id=owner_id)
+        return OwnerBankAccountResponse.model_validate(account) if account else None
+
+
+owner_bank_account_crud = OwnerBankAccountCRUD()

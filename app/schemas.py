@@ -8,6 +8,51 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict
 
 
+class SubscriptionPlanSlug(StrEnum):
+    STARTER = "starter"
+    BASIC = "basic"
+    PRO = "pro"
+    BUSINESS = "business"
+    ENTERPRISE = "enterprise"
+
+
+class SubscriptionStatus(StrEnum):
+    TRIALING = "trialing"
+    ACTIVE = "active"
+    PAST_DUE = "past_due"
+    CANCELLED = "cancelled"
+    INCOMPLETE = "incomplete"
+
+
+class SubscriptionPlanResponse(BaseModel):
+    id: UUID
+    slug: SubscriptionPlanSlug
+    name: str
+    max_listings: int
+    price_eur_cents: int
+    stripe_price_id: str | None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class OwnerSubscriptionResponse(BaseModel):
+    id: UUID
+    owner_id: UUID
+    plan: SubscriptionPlanResponse
+    status: SubscriptionStatus
+    current_period_end: datetime | None
+    cancelled_at: datetime | None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SubscriptionCheckoutResponse(BaseModel):
+    checkout_url: str
+    session_id: str
+
+
+class PortalResponse(BaseModel):
+    portal_url: str
+
+
 class PaymentStatus(StrEnum):
     PENDING = "pending"
     PAID = "paid"
@@ -58,3 +103,55 @@ class ConnectStatusResponse(BaseModel):
     stripe_account_id: str | None
     requirements_outstanding: bool = False
     requirements_eventually_due: bool = False
+
+
+class OwnerBankAccountUpsert(BaseModel):
+    iban: str
+    bic: str | None = None
+    bank_name: str | None = None
+    account_holder: str
+
+
+class OwnerBankAccountResponse(BaseModel):
+    id: UUID
+    owner_id: UUID
+    iban: str
+    bic: str | None
+    bank_name: str | None
+    account_holder: str
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class BankTransferStatus(StrEnum):
+    PENDING = "pending"
+    CONFIRMED = "confirmed"
+    CANCELLED = "cancelled"
+
+
+class PaymentCapabilitiesResponse(BaseModel):
+    can_accept_card: bool
+    can_accept_bank_transfer: bool
+
+
+class BankTransferRequest(BaseModel):
+    booking_id: UUID
+
+
+class BankTransferResponse(BaseModel):
+    id: UUID
+    booking_id: UUID
+    user_id: UUID
+    property_owner_id: UUID
+    status: BankTransferStatus
+    amount: Decimal
+    currency: str
+    bank_iban: str
+    bank_bic: str
+    bank_name: str
+    account_holder: str
+    reference: str
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
