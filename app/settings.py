@@ -55,7 +55,6 @@ stripe_platform_fee_percent = float(
 )
 
 users_ms_url = os.environ.get("USERS_MS_URL", "http://localhost:8000")
-internal_api_key = os.environ.get("INTERNAL_API_KEY", "")
 
 # Stripe processing fee passed to customer on card payments
 stripe_processing_fee_pct = float(os.environ.get("STRIPE_PROCESSING_FEE_PCT", "1.5"))
