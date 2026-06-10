@@ -435,6 +435,81 @@ class TestStripeWebhook:
         )
         assert resp.status_code == 400
 
+    def test_subscription_deleted_event_cancels_and_revokes(self, client_factory):
+        """customer.subscription.deleted must cancel the subscription record
+        and revoke owner scopes — Stripe uses 'canceled' (one L)."""
+        owner_id = str(uuid4())
+
+        sub = MagicMock()
+        sub.metadata = MagicMock(owner_id=owner_id)
+
+        event = MagicMock()
+        event.type = "customer.subscription.deleted"
+        event.data.object = sub
+
+        mock_sc = MagicMock()
+        mock_sc.construct_event.return_value = event
+
+        mock_uc = MagicMock()
+        mock_uc.revoke_owner = AsyncMock()
+
+        client = client_factory(make_customer(), stripe_client=mock_sc, users_client=mock_uc)
+
+        with patch("app.routers.payments.subscription_crud.cancel_subscription", new=AsyncMock()) as cancel_mock:
+            resp = client.post(
+                "/payments/webhook",
+                content=b"{}",
+                headers={"Stripe-Signature": "t=1,v1=abc"},
+            )
+
+        assert resp.status_code == 200
+        cancel_mock.assert_called_once()
+        mock_uc.revoke_owner.assert_called_once()
+
+    def test_subscription_updated_with_cancel_at_period_end_persists_flag(self, client_factory):
+        """customer.subscription.updated with cancel_at_period_end=True must
+        persist the flag and must NOT grant owner role or send welcome email."""
+        owner_id = str(uuid4())
+
+        sub = MagicMock()
+        sub.status = "active"
+        sub.id = "sub_test"
+        sub.customer = "cus_test"
+        sub.current_period_end = 9_999_999_999
+        sub.cancel_at_period_end = True
+        sub.metadata = MagicMock(owner_id=owner_id, plan_slug="starter")
+
+        event = MagicMock()
+        event.type = "customer.subscription.updated"
+        event.data.object = sub
+
+        mock_sc = MagicMock()
+        mock_sc.construct_event.return_value = event
+
+        mock_uc = MagicMock()
+        mock_uc.grant_role = AsyncMock()
+
+        client = client_factory(make_customer(), stripe_client=mock_sc, users_client=mock_uc)
+
+        mock_plan = MagicMock()
+        mock_plan.id = uuid4()
+        upsert_mock = AsyncMock()
+
+        with (
+            patch("app.routers.payments.subscription_crud.get_plan_by_slug", new=AsyncMock(return_value=mock_plan)),
+            patch("app.routers.payments.subscription_crud.upsert_subscription", new=upsert_mock),
+        ):
+            resp = client.post(
+                "/payments/webhook",
+                content=b"{}",
+                headers={"Stripe-Signature": "t=1,v1=abc"},
+            )
+
+        assert resp.status_code == 200
+        upsert_mock.assert_called_once()
+        assert upsert_mock.call_args.kwargs["cancel_at_period_end"] is True
+        mock_uc.grant_role.assert_not_called()
+
 
 # ===========================================================================
 # DELETE /payments/{payment_id}

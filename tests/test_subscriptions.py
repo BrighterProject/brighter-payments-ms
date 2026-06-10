@@ -105,13 +105,13 @@ def test_list_all_subscriptions_admin(sub_admin_client):
     mock_sub.plan = _make_plan("basic", "Basic", 5, 2500, "price_b")
     with patch("app.routers.subscriptions.subscription_crud") as mock:
         mock.list_all = AsyncMock(return_value=[mock_sub])
-        resp = sub_admin_client.get("/subscriptions/")
+        resp = sub_admin_client.get("/payments/subscriptions/")
     assert resp.status_code == 200
     assert len(resp.json()) == 1
 
 
 def test_list_all_subscriptions_forbidden_for_owner(sub_owner_client):
-    resp = sub_owner_client.get("/subscriptions/")
+    resp = sub_owner_client.get("/payments/subscriptions/")
     assert resp.status_code == 403
 
 
@@ -122,7 +122,7 @@ def test_list_plans_returns_all(sub_admin_client):
     ]
     with patch("app.routers.subscriptions.subscription_crud") as mock:
         mock.list_plans = AsyncMock(return_value=mock_plans)
-        resp = sub_admin_client.get("/subscriptions/plans")
+        resp = sub_admin_client.get("/payments/subscriptions/plans")
     assert resp.status_code == 200
     assert len(resp.json()) == 2
 
@@ -130,7 +130,7 @@ def test_list_plans_returns_all(sub_admin_client):
 def test_get_my_subscription_not_found(sub_owner_client):
     with patch("app.routers.subscriptions.subscription_crud") as mock:
         mock.get_owner_subscription = AsyncMock(return_value=None)
-        resp = sub_owner_client.get("/subscriptions/me")
+        resp = sub_owner_client.get("/payments/subscriptions/me")
     assert resp.status_code == 404
 
 
@@ -147,7 +147,7 @@ def test_get_plans_public():
     client = TestClient(app, raise_server_exceptions=True)
     with patch("app.routers.subscriptions.subscription_crud") as mock:
         mock.list_plans = AsyncMock(return_value=[])
-        resp = client.get("/subscriptions/plans")
+        resp = client.get("/payments/subscriptions/plans")
     assert resp.status_code == 200
 
 
@@ -158,7 +158,7 @@ def test_subscribe_creates_checkout(sub_owner_client_with_stripe):
     mock_stripe.v1.checkout.sessions.create.return_value = mock_session
     with patch("app.routers.subscriptions.subscription_crud") as mock_crud:
         mock_crud.get_plan_by_slug = AsyncMock(return_value=mock_plan)
-        resp = client.post("/subscriptions/checkout?plan_slug=basic")
+        resp = client.post("/payments/subscriptions/checkout?plan_slug=basic")
     assert resp.status_code == 201
     assert resp.json()["checkout_url"] == "https://checkout.stripe.com/s/test"
 
@@ -167,7 +167,7 @@ def test_subscribe_enterprise_returns_422(sub_owner_client):
     mock_plan = MagicMock(stripe_price_id=None, slug="enterprise")
     with patch("app.routers.subscriptions.subscription_crud") as mock_crud:
         mock_crud.get_plan_by_slug = AsyncMock(return_value=mock_plan)
-        resp = sub_owner_client.post("/subscriptions/checkout?plan_slug=enterprise")
+        resp = sub_owner_client.post("/payments/subscriptions/checkout?plan_slug=enterprise")
     assert resp.status_code == 422
 
 
@@ -205,7 +205,7 @@ def test_checkout_success_url_uses_en_locale():
         "app.routers.subscriptions.subscription_crud.get_plan_by_slug",
         new=AsyncMock(return_value=_make_plan("starter", "Starter", 1, 999, "price_test")),
     ):
-        resp = client.post("/subscriptions/checkout?plan_slug=starter&locale=en")
+        resp = client.post("/payments/subscriptions/checkout?plan_slug=starter&locale=en")
 
     assert resp.status_code == 201
     call_params = mock_stripe.v1.checkout.sessions.create.call_args[1]["params"]
@@ -226,7 +226,7 @@ def test_checkout_defaults_to_bg_locale():
         "app.routers.subscriptions.subscription_crud.get_plan_by_slug",
         new=AsyncMock(return_value=_make_plan("starter", "Starter", 1, 999, "price_test")),
     ):
-        resp = client.post("/subscriptions/checkout?plan_slug=starter")
+        resp = client.post("/payments/subscriptions/checkout?plan_slug=starter")
 
     assert resp.status_code == 201
     call_params = mock_stripe.v1.checkout.sessions.create.call_args[1]["params"]
@@ -247,7 +247,7 @@ def test_portal_return_url_uses_locale():
         "app.routers.subscriptions.subscription_crud.get_owner_subscription",
         new=AsyncMock(return_value=mock_sub),
     ):
-        resp = client.post("/subscriptions/portal?locale=en")
+        resp = client.post("/payments/subscriptions/portal?locale=en")
 
     assert resp.status_code == 200
     call_params = mock_stripe.v1.billing_portal.sessions.create.call_args[1]["params"]

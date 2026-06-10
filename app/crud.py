@@ -139,21 +139,28 @@ class SubscriptionCRUD:
         stripe_customer_id: str | None = None,
         stripe_subscription_id: str | None = None,
         current_period_end: datetime | None = None,
+        cancel_at_period_end: bool = False,
     ) -> OwnerSubscription:
-        defaults: dict = {"plan_id": plan_id, "status": status}
+        defaults: dict = {
+            "plan_id": plan_id,
+            "status": status,
+            "cancel_at_period_end": cancel_at_period_end,
+        }
         if stripe_customer_id is not None:
             defaults["stripe_customer_id"] = stripe_customer_id
         if stripe_subscription_id is not None:
             defaults["stripe_subscription_id"] = stripe_subscription_id
         if current_period_end is not None:
             defaults["current_period_end"] = current_period_end
+        if status == SubscriptionStatus.CANCELED:
+            defaults["cancelled_at"] = datetime.utcnow()
         sub, _ = await OwnerSubscription.update_or_create(defaults, owner_id=owner_id)
         return await OwnerSubscription.get(id=sub.id).select_related("plan")
 
     async def cancel_subscription(self, owner_id: UUID) -> OwnerSubscription | None:
         sub = await self.get_owner_subscription(owner_id)
         if sub:
-            sub.status = SubscriptionStatus.CANCELLED
+            sub.status = SubscriptionStatus.CANCELED
             sub.cancelled_at = datetime.utcnow()
             await sub.save()
         return sub

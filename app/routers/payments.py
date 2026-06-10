@@ -452,7 +452,8 @@ async def stripe_webhook(
 
     if event.type == "checkout.session.completed":
         await _handle_session_completed(
-            obj, bookings_client, properties_client, notifications_client, stripe_client
+            obj, bookings_client, properties_client, notifications_client, stripe_client,
+            users_client, background_tasks,
         )
     elif event.type == "checkout.session.expired":
         await _handle_session_expired(obj, bookings_client)
@@ -466,7 +467,7 @@ async def stripe_webhook(
     ):
         await _handle_subscription_updated(obj, users_client, notifications_client, background_tasks)
     elif event.type == "customer.subscription.deleted":
-        await _handle_subscription_deleted(obj)
+        await _handle_subscription_deleted(obj, users_client)
 
     return {"received": True}
 
@@ -495,8 +496,24 @@ async def _handle_session_completed(  # type: ignore[type-arg]
     properties_client: PropertiesClient,
     notifications_client: NotificationsClient,
     stripe_client: StripeClient,
+    users_client: UsersClient,
+    background_tasks: BackgroundTasks,
 ) -> None:
     """Mark payment as PAID once Stripe confirms the Checkout Session."""
+    # Subscription checkout — grant owner role immediately; DB record arrives via
+    # customer.subscription.created/updated but that event fires with 'incomplete'
+    # status and may never transition via webhook in test mode.
+    if getattr(session, "mode", None) == "subscription":
+        metadata = getattr(session, "metadata", None)
+        owner_id_str = getattr(metadata, "owner_id", None)
+        if owner_id_str:
+            try:
+                await users_client.grant_role(UUID(owner_id_str))
+                logger.info("subscription checkout: granted owner role to {}", owner_id_str)
+            except Exception as exc:
+                logger.error("subscription checkout: grant_role failed for {} — {}", owner_id_str, exc)
+        return
+
     payment_intent_id = session.payment_intent or ""
     payment = await payment_crud.mark_paid(session.id, payment_intent_id)
     payment_locale = payment.locale if payment else "en"
@@ -692,16 +709,15 @@ async def _handle_subscription_updated(  # type: ignore[type-arg]
         datetime.fromtimestamp(period_end_ts, tz=UTC) if period_end_ts else None
     )
 
-    items_data = getattr(getattr(subscription, "items", None), "data", [])
-    first_item = items_data[0] if items_data else None
-    price_obj = getattr(first_item, "price", None) if first_item else None
-    plan_slug = getattr(getattr(price_obj, "metadata", None), "plan_slug", None)
+    plan_slug = getattr(getattr(subscription, "metadata", None), "plan_slug", None)
     plan = await subscription_crud.get_plan_by_slug(plan_slug) if plan_slug else None
     if plan is None:
         logger.warning(
             "subscription_webhook: unknown plan_slug {} for owner {}", plan_slug, owner_id_str
         )
         return
+
+    cancel_at_period_end: bool = bool(getattr(subscription, "cancel_at_period_end", False))
 
     await subscription_crud.upsert_subscription(
         owner_id=UUID(owner_id_str),
@@ -710,9 +726,10 @@ async def _handle_subscription_updated(  # type: ignore[type-arg]
         stripe_customer_id=stripe_customer_id,
         stripe_subscription_id=stripe_sub_id,
         current_period_end=current_period_end,
+        cancel_at_period_end=cancel_at_period_end,
     )
 
-    if new_status in (SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING):
+    if new_status in (SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING) and not cancel_at_period_end:
         user = await users_client.get_user(UUID(owner_id_str))
         owner_email: str | None = user.get("email") if user else None
         owner_locale: str = user.get("locale", "bg") if user else "bg"
@@ -729,11 +746,13 @@ async def _handle_subscription_updated(  # type: ignore[type-arg]
             )
 
 
-async def _handle_subscription_deleted(subscription) -> None:  # type: ignore[type-arg]
+async def _handle_subscription_deleted(subscription, users_client: UsersClient) -> None:  # type: ignore[type-arg]
     owner_id_str = getattr(getattr(subscription, "metadata", None), "owner_id", None)
     if not owner_id_str:
         return
-    await subscription_crud.cancel_subscription(UUID(owner_id_str))
+    owner_id = UUID(owner_id_str)
+    await subscription_crud.cancel_subscription(owner_id)
+    await users_client.revoke_owner(owner_id)
 
 
 # ---------------------------------------------------------------------------

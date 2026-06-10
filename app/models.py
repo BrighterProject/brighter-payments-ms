@@ -63,7 +63,7 @@ class SubscriptionStatus(StrEnum):
     TRIALING = "trialing"
     ACTIVE = "active"
     PAST_DUE = "past_due"
-    CANCELLED = "cancelled"
+    CANCELED = "canceled"
     INCOMPLETE = "incomplete"
 
 
@@ -90,6 +90,7 @@ class OwnerSubscription(Model):
     stripe_customer_id = fields.CharField(max_length=255, null=True)
     stripe_subscription_id = fields.CharField(max_length=255, null=True, unique=True)
     current_period_end = fields.DatetimeField(null=True)
+    cancel_at_period_end = fields.BooleanField(default=False)
     cancelled_at = fields.DatetimeField(null=True)
 
     class Meta:  # type: ignore

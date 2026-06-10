@@ -20,7 +20,7 @@ class SubscriptionStatus(StrEnum):
     TRIALING = "trialing"
     ACTIVE = "active"
     PAST_DUE = "past_due"
-    CANCELLED = "cancelled"
+    CANCELED = "canceled"
     INCOMPLETE = "incomplete"
 
 
@@ -40,6 +40,7 @@ class OwnerSubscriptionResponse(BaseModel):
     plan: SubscriptionPlanResponse
     status: SubscriptionStatus
     current_period_end: datetime | None
+    cancel_at_period_end: bool = False
     cancelled_at: datetime | None
     model_config = ConfigDict(from_attributes=True)
 

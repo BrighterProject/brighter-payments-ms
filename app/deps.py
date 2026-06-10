@@ -363,8 +363,7 @@ class UsersClient:
         """Grant a named role to a user via users-ms. Logs at ERROR on failure; never raises."""
         try:
             resp = await self._client.post(
-                f"/users/{user_id}/grant-role",
-                json={"role": role},
+                f"/users/{user_id}/grant-owner",
                 headers=self._headers(),
             )
             if resp.status_code not in (200, 204):
@@ -384,6 +383,23 @@ class UsersClient:
                 role,
                 exc,
             )
+
+    async def revoke_owner(self, user_id: UUID) -> None:
+        """Strip owner scopes from a user via users-ms. Logs at ERROR on failure; never raises."""
+        try:
+            resp = await self._client.post(
+                f"/users/{user_id}/revoke-owner",
+                headers=self._headers(),
+            )
+            if resp.status_code not in (200, 204):
+                logger.error(
+                    "UsersClient.revoke_owner: failed for user_id={} — HTTP {} {}",
+                    user_id,
+                    resp.status_code,
+                    resp.text,
+                )
+        except Exception as exc:
+            logger.error("UsersClient.revoke_owner: exception for user_id={} — {}", user_id, exc)
 
 
 _users_client = UsersClient()
