@@ -14,9 +14,8 @@ from app.schemas import (
     SubscriptionPlanResponse,
 )
 from app.scopes import PaymentScope
-from app.utils import append_query_params
 
-router = APIRouter(prefix="/subscriptions", tags=["subscriptions"])
+router = APIRouter(prefix="/payments/subscriptions", tags=["subscriptions"])
 
 
 @router.get("/", response_model=list[OwnerSubscriptionResponse])
@@ -63,10 +62,9 @@ async def subscribe(
             detail="Enterprise plans require manual activation. Please contact us.",
         )
 
-    success_url = append_query_params(
-        settings.stripe_subscription_success_url.replace("{locale}", locale),
-        session_id="{CHECKOUT_SESSION_ID}",
-    )
+    _success_base = settings.stripe_subscription_success_url.replace("{locale}", locale)
+    sep = "&" if "?" in _success_base else "?"
+    success_url = f"{_success_base}{sep}session_id={{CHECKOUT_SESSION_ID}}"
     cancel_url = settings.stripe_subscription_cancel_url.replace("{locale}", locale)
 
     session = stripe_client.v1.checkout.sessions.create(params={
@@ -74,6 +72,7 @@ async def subscribe(
         "line_items": [{"price": plan.stripe_price_id, "quantity": 1}],
         "customer_email": current_user.username,
         "metadata": {"owner_id": str(current_user.id), "plan_slug": plan_slug},
+        "subscription_data": {"metadata": {"owner_id": str(current_user.id), "plan_slug": plan_slug}},
         "client_reference_id": str(current_user.id),
         "success_url": success_url,
         "cancel_url": cancel_url,
@@ -101,10 +100,11 @@ async def customer_portal(
 @router.get("/can-add-listing")
 async def can_add_listing(
     owner_id: UUID,
+    current_count: int = 0,
     current_user: CurrentUser = Depends(get_current_user),
 ) -> dict:
     """Internal endpoint called by properties-ms to enforce listing quota."""
     if current_user.id != owner_id and not current_user.is_admin:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden.")
-    allowed = await subscription_crud.can_add_listing(owner_id)
+    allowed = await subscription_crud.can_add_listing(owner_id, current_count)
     return {"allowed": allowed}

@@ -140,16 +140,14 @@ class SubscriptionCRUD:
         stripe_subscription_id: str | None = None,
         current_period_end: datetime | None = None,
     ) -> OwnerSubscription:
-        sub, _ = await OwnerSubscription.get_or_create(owner_id=owner_id)
-        sub.plan_id = plan_id
-        sub.status = status
-        if stripe_customer_id:
-            sub.stripe_customer_id = stripe_customer_id
-        if stripe_subscription_id:
-            sub.stripe_subscription_id = stripe_subscription_id
-        if current_period_end:
-            sub.current_period_end = current_period_end
-        await sub.save()
+        defaults: dict = {"plan_id": plan_id, "status": status}
+        if stripe_customer_id is not None:
+            defaults["stripe_customer_id"] = stripe_customer_id
+        if stripe_subscription_id is not None:
+            defaults["stripe_subscription_id"] = stripe_subscription_id
+        if current_period_end is not None:
+            defaults["current_period_end"] = current_period_end
+        sub, _ = await OwnerSubscription.update_or_create(defaults, owner_id=owner_id)
         return await OwnerSubscription.get(id=sub.id).select_related("plan")
 
     async def cancel_subscription(self, owner_id: UUID) -> OwnerSubscription | None:
@@ -164,20 +162,14 @@ class SubscriptionCRUD:
         """Return all owner subscriptions with plan data (admin use)."""
         return await OwnerSubscription.all().select_related("plan").order_by("-created_at")
 
-    async def can_add_listing(self, owner_id: UUID) -> bool:
+    async def can_add_listing(self, owner_id: UUID, current_count: int) -> bool:
         """Return True if owner has an active subscription with quota remaining."""
         sub = await self.get_owner_subscription(owner_id)
         if sub is None or sub.status not in (SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING):
             return False
         if sub.plan.max_listings == -1:
             return True
-        active_count = await _count_owner_listings(owner_id)
-        return active_count < sub.plan.max_listings
-
-
-async def _count_owner_listings(owner_id: UUID) -> int:
-    """Cross-service stub — replaced by PaymentsClient call in properties-ms Task 4."""
-    return 0
+        return current_count < sub.plan.max_listings
 
 
 subscription_crud = SubscriptionCRUD()
