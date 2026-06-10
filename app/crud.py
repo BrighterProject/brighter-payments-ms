@@ -155,7 +155,8 @@ class SubscriptionCRUD:
         if status == SubscriptionStatus.CANCELED:
             defaults["cancelled_at"] = datetime.utcnow()
         sub, _ = await OwnerSubscription.update_or_create(defaults, owner_id=owner_id)
-        return await OwnerSubscription.get(id=sub.id).select_related("plan")
+        await sub.fetch_related("plan")
+        return sub
 
     async def cancel_subscription(self, owner_id: UUID) -> OwnerSubscription | None:
         sub = await self.get_owner_subscription(owner_id)

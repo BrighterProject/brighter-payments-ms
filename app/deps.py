@@ -359,47 +359,24 @@ class UsersClient:
             logger.warning("UsersClient: failed to fetch user {} — {}", user_id, exc)
             return None
 
-    async def grant_role(self, user_id: UUID, role: str = "owner") -> None:
-        """Grant a named role to a user via users-ms. Logs at ERROR on failure; never raises."""
+    async def _post_admin(self, path: str, label: str) -> None:
+        """POST to a users-ms admin endpoint. Logs at ERROR on failure; never raises."""
         try:
-            resp = await self._client.post(
-                f"/users/{user_id}/grant-owner",
-                headers=self._headers(),
-            )
+            resp = await self._client.post(path, headers=self._headers())
             if resp.status_code not in (200, 204):
-                logger.error(
-                    "UsersClient.grant_role: failed for user_id={} role={} — HTTP {} {}",
-                    user_id,
-                    role,
-                    resp.status_code,
-                    resp.text,
-                )
-                # TODO: trigger high-priority alert (e.g. Sentry capture_exception with level="fatal")
-                # so ops can manually grant the role. Include owner_id in the alert payload.
+                logger.error("UsersClient.{}: HTTP {} {}", label, resp.status_code, resp.text)
         except Exception as exc:
-            logger.error(
-                "UsersClient.grant_role: exception for user_id={} role={} — {}",
-                user_id,
-                role,
-                exc,
-            )
+            logger.error("UsersClient.{}: exception — {}", label, exc)
+
+    async def grant_role(self, user_id: UUID, role: str = "owner") -> None:
+        """Grant owner role to a user via users-ms. Logs at ERROR on failure; never raises."""
+        # TODO: trigger high-priority alert (e.g. Sentry capture_exception with level="fatal")
+        # so ops can manually grant the role. Include owner_id in the alert payload.
+        await self._post_admin(f"/users/{user_id}/grant-owner", f"grant_role({role})")
 
     async def revoke_owner(self, user_id: UUID) -> None:
         """Strip owner scopes from a user via users-ms. Logs at ERROR on failure; never raises."""
-        try:
-            resp = await self._client.post(
-                f"/users/{user_id}/revoke-owner",
-                headers=self._headers(),
-            )
-            if resp.status_code not in (200, 204):
-                logger.error(
-                    "UsersClient.revoke_owner: failed for user_id={} — HTTP {} {}",
-                    user_id,
-                    resp.status_code,
-                    resp.text,
-                )
-        except Exception as exc:
-            logger.error("UsersClient.revoke_owner: exception for user_id={} — {}", user_id, exc)
+        await self._post_admin(f"/users/{user_id}/revoke-owner", "revoke_owner")
 
 
 _users_client = UsersClient()

@@ -7,6 +7,7 @@ from stripe import StripeClient
 from app import settings
 from app.crud import subscription_crud
 from app.deps import CurrentUser, get_current_user, get_stripe_client, require_scopes
+from app.utils import append_query_params
 from app.schemas import (
     OwnerSubscriptionResponse,
     PortalResponse,
@@ -62,9 +63,10 @@ async def subscribe(
             detail="Enterprise plans require manual activation. Please contact us.",
         )
 
-    _success_base = settings.stripe_subscription_success_url.replace("{locale}", locale)
-    sep = "&" if "?" in _success_base else "?"
-    success_url = f"{_success_base}{sep}session_id={{CHECKOUT_SESSION_ID}}"
+    success_url = append_query_params(
+        settings.stripe_subscription_success_url.replace("{locale}", locale),
+        session_id="{CHECKOUT_SESSION_ID}",
+    )
     cancel_url = settings.stripe_subscription_cancel_url.replace("{locale}", locale)
 
     session = stripe_client.v1.checkout.sessions.create(params={

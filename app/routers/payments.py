@@ -504,8 +504,7 @@ async def _handle_session_completed(  # type: ignore[type-arg]
     # customer.subscription.created/updated but that event fires with 'incomplete'
     # status and may never transition via webhook in test mode.
     if getattr(session, "mode", None) == "subscription":
-        metadata = getattr(session, "metadata", None)
-        owner_id_str = getattr(metadata, "owner_id", None)
+        owner_id_str = getattr(getattr(session, "metadata", None), "owner_id", None)
         if owner_id_str:
             try:
                 await users_client.grant_role(UUID(owner_id_str))
@@ -717,7 +716,7 @@ async def _handle_subscription_updated(  # type: ignore[type-arg]
         )
         return
 
-    cancel_at_period_end: bool = bool(getattr(subscription, "cancel_at_period_end", False))
+    cancel_at_period_end: bool = getattr(subscription, "cancel_at_period_end", False)
 
     await subscription_crud.upsert_subscription(
         owner_id=UUID(owner_id_str),
