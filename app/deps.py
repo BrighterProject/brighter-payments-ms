@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from functools import lru_cache
+from typing import TYPE_CHECKING
 from urllib.parse import quote, unquote
 from uuid import UUID
 
@@ -8,9 +9,11 @@ from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from loguru import logger
 from stripe import StripeClient
-from stripe._base_address import BaseAddresses
 
 from app import settings
+
+if TYPE_CHECKING:
+    from stripe._base_address import BaseAddresses
 from app.scopes import PAYMENT_SCOPE_DESCRIPTIONS, PaymentScope
 
 oauth2_scheme = OAuth2PasswordBearer(
@@ -122,11 +125,13 @@ def get_stripe_client() -> StripeClient:
     When STRIPE_API_BASE is set (e.g. in e2e tests pointing at stripe-mock),
     all API, Connect, and file upload calls are redirected to that base.
     """
-    base_addresses: BaseAddresses = (
-        BaseAddresses(api=settings.stripe_api_base, connect=settings.stripe_api_base, files=settings.stripe_api_base)
-        if settings.stripe_api_base
-        else BaseAddresses()
-    )
+    base_addresses: BaseAddresses = {}  # type: ignore[assignment]
+    if settings.stripe_api_base:
+        base_addresses = {  # type: ignore[assignment]
+            "api": settings.stripe_api_base,
+            "connect": settings.stripe_api_base,
+            "files": settings.stripe_api_base,
+        }
     return StripeClient(
         settings.stripe_secret_key,
         stripe_version="2025-04-30.basil",

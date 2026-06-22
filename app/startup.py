@@ -1,13 +1,15 @@
 """Startup task: ensure subscription plans exist in DB and Stripe."""
 
 import asyncio
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 from stripe import StripeClient
-from stripe._base_address import BaseAddresses
 
 from app.models import SubscriptionPlan, SubscriptionPlanSlug
+
+if TYPE_CHECKING:
+    from stripe._base_address import BaseAddresses
 from app.settings import stripe_api_base, stripe_secret_key
 
 _PLACEHOLDER_KEYS = {"sk_test_placeholder", ""}
@@ -59,11 +61,13 @@ def _find_or_create_stripe_price(client: StripeClient, plan_def: dict[str, Any])
 
 async def ensure_subscription_plans() -> None:
     has_stripe = stripe_secret_key not in _PLACEHOLDER_KEYS
-    base_addresses: BaseAddresses = (
-        BaseAddresses(api=stripe_api_base, connect=stripe_api_base, files=stripe_api_base)
-        if stripe_api_base
-        else BaseAddresses()
-    )
+    base_addresses: BaseAddresses = {}  # type: ignore[assignment]
+    if stripe_api_base:
+        base_addresses = {  # type: ignore[assignment]
+            "api": stripe_api_base,
+            "connect": stripe_api_base,
+            "files": stripe_api_base,
+        }
     client = StripeClient(stripe_secret_key, base_addresses=base_addresses) if has_stripe else None
 
     if not has_stripe:
