@@ -9,6 +9,8 @@ properties_ms_url = os.environ.get("PROPERTIES_MS_URL", "http://localhost:8001")
 
 # Stripe credentials — use test keys locally, live keys in production
 stripe_secret_key = os.environ.get("STRIPE_SECRET_KEY", "")
+# Override Stripe API base URL — used in e2e tests to point at stripe-mock
+stripe_api_base = os.environ.get("STRIPE_API_BASE", "")
 stripe_webhook_secret = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
 # Separate signing secret for the Stripe Connect / V2 webhook destination
 stripe_connect_webhook_secret = os.environ.get(
