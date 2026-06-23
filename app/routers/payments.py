@@ -34,6 +34,7 @@ from app.schemas import (
     CheckoutResponse,
     PaymentCapabilitiesResponse,
     PaymentResponse,
+    RefundRequest,
 )
 from app.scopes import PaymentScope
 
@@ -136,9 +137,7 @@ async def create_checkout(
     )
     cancel_url = settings.stripe_cancel_url.replace("{locale}", locale)
 
-    expires_at = datetime.now(UTC) + timedelta(
-        minutes=settings.stripe_checkout_expires_minutes
-    )
+    expires_at = datetime.now(UTC) + timedelta(minutes=settings.stripe_checkout_expires_minutes)
 
     _product_names = {
         "bg": "Резервация на база",
@@ -192,14 +191,16 @@ async def create_checkout(
     fee_pct = Decimal(str(settings.stripe_processing_fee_pct)) / 100
     fee_fixed = Decimal(settings.stripe_processing_fee_fixed_eur_cents) / 100
     stripe_fee = (total_price * fee_pct + fee_fixed).quantize(Decimal("0.01"))
-    checkout_params["line_items"].append({
-        "price_data": {
-            "currency": currency,
-            "product_data": {"name": "Payment processing fee"},
-            "unit_amount": int(stripe_fee * 100),
-        },
-        "quantity": 1,
-    })
+    checkout_params["line_items"].append(
+        {
+            "price_data": {
+                "currency": currency,
+                "product_data": {"name": "Payment processing fee"},
+                "unit_amount": int(stripe_fee * 100),
+            },
+            "quantity": 1,
+        }
+    )
 
     try:
         session = stripe_client.v1.checkout.sessions.create(
@@ -255,8 +256,7 @@ async def list_payments(
     List payments.  Customers see only their own; admins see all.
     """
     is_admin = (
-        PaymentScope.ADMIN in current_user.scopes
-        or PaymentScope.ADMIN_READ in current_user.scopes
+        PaymentScope.ADMIN in current_user.scopes or PaymentScope.ADMIN_READ in current_user.scopes
     )
     return await payment_crud.list_payments(
         page=page,
@@ -284,8 +284,7 @@ async def get_payment_by_booking(
         )
 
     is_admin = (
-        PaymentScope.ADMIN in current_user.scopes
-        or PaymentScope.ADMIN_READ in current_user.scopes
+        PaymentScope.ADMIN in current_user.scopes or PaymentScope.ADMIN_READ in current_user.scopes
     )
     if not is_admin and payment.user_id != current_user.id:
         raise HTTPException(
@@ -306,7 +305,10 @@ async def get_payment_by_session(
     session_id: str,
     current_user: CurrentUser = Depends(can_read_payment),
 ) -> PaymentResponse:
-    """Return a payment by its Stripe Checkout Session ID (used by the success page to poll status)."""
+    """Return a payment by its Stripe Checkout Session ID.
+
+    Used by the success page to poll payment status.
+    """
     payment = await payment_crud.get_by_session(session_id)
     if payment is None:
         raise HTTPException(
@@ -314,8 +316,7 @@ async def get_payment_by_session(
             detail="Payment not found.",
         )
     is_admin = (
-        PaymentScope.ADMIN in current_user.scopes
-        or PaymentScope.ADMIN_READ in current_user.scopes
+        PaymentScope.ADMIN in current_user.scopes or PaymentScope.ADMIN_READ in current_user.scopes
     )
     if not is_admin and payment.user_id != current_user.id:
         raise HTTPException(
@@ -333,11 +334,16 @@ async def get_payment_by_session(
 @router.post("/booking/{booking_id}/refund", response_model=PaymentResponse)
 async def refund_booking_payment(
     booking_id: UUID,
+    body: RefundRequest | None = None,
     current_user: CurrentUser = Depends(get_current_user),
     stripe_client: StripeClient = Depends(get_stripe_client),
 ) -> PaymentResponse:
     """
-    Issue a full Stripe refund for a booking's payment.
+    Issue a Stripe refund for a booking's payment.
+
+    A full refund is issued when no ``amount`` is supplied (or the amount is at
+    least the captured total). A smaller ``amount`` issues a partial refund and
+    leaves the payment in ``PARTIALLY_REFUNDED``.
 
     Authorised callers:
       - Admins (admin:payments:write or admin:scopes)
@@ -369,35 +375,47 @@ async def refund_booking_payment(
             detail="Cannot refund: no payment intent on record.",
         )
 
+    requested = body.amount if body is not None else None
+    if requested is not None and requested <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Refund amount must be greater than zero.",
+        )
+    is_full = requested is None or requested >= payment.amount
+    refund_amount = payment.amount if is_full else requested
+
+    params: stripe.RefundService.CreateParams = {"payment_intent": payment.stripe_payment_intent_id}
+    if not is_full:
+        # Stripe expects the amount in minor units (cents).
+        params["amount"] = int((refund_amount * 100).to_integral_value())
+
     try:
-        refund = stripe_client.v1.refunds.create(
-            params={"payment_intent": payment.stripe_payment_intent_id}
-        )
+        refund = stripe_client.v1.refunds.create(params=params)
     except stripe.InvalidRequestError as exc:
-        logger.warning(
-            "stripe refund rejected pi={}: {}", payment.stripe_payment_intent_id, exc
-        )
+        logger.warning("stripe refund rejected pi={}: {}", payment.stripe_payment_intent_id, exc)
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(exc.user_message or exc),
         ) from exc
     except stripe.StripeError as exc:
-        logger.error(
-            "stripe refund failed pi={}: {}", payment.stripe_payment_intent_id, exc
-        )
+        logger.error("stripe refund failed pi={}: {}", payment.stripe_payment_intent_id, exc)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Payment provider error. Please try again.",
         ) from exc
 
     logger.info(
-        "stripe refund issued | refund={} pi={} booking={}",
+        "stripe refund issued | refund={} pi={} booking={} amount={} full={}",
         refund.id,
         payment.stripe_payment_intent_id,
         booking_id,
+        refund_amount,
+        is_full,
     )
 
-    updated = await payment_crud.mark_refunded(payment.stripe_payment_intent_id)
+    updated = await payment_crud.mark_refunded(
+        payment.stripe_payment_intent_id, refund_amount, is_full
+    )
     if updated is None:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -434,9 +452,7 @@ async def stripe_webhook(
     sig_header = request.headers.get("Stripe-Signature", "")
 
     try:
-        event = stripe_client.construct_event(
-            raw_body, sig_header, settings.stripe_webhook_secret
-        )
+        event = stripe_client.construct_event(raw_body, sig_header, settings.stripe_webhook_secret)
     except stripe.SignatureVerificationError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -452,8 +468,13 @@ async def stripe_webhook(
 
     if event.type == "checkout.session.completed":
         await _handle_session_completed(
-            obj, bookings_client, properties_client, notifications_client, stripe_client,
-            users_client, background_tasks,
+            obj,
+            bookings_client,
+            properties_client,
+            notifications_client,
+            stripe_client,
+            users_client,
+            background_tasks,
         )
     elif event.type == "checkout.session.expired":
         await _handle_session_expired(obj, bookings_client)
@@ -465,7 +486,9 @@ async def stripe_webhook(
         "customer.subscription.created",
         "customer.subscription.updated",
     ):
-        await _handle_subscription_updated(obj, users_client, notifications_client, background_tasks)
+        await _handle_subscription_updated(
+            obj, users_client, notifications_client, background_tasks
+        )
     elif event.type == "customer.subscription.deleted":
         await _handle_subscription_deleted(obj, users_client)
 
@@ -510,27 +533,25 @@ async def _handle_session_completed(  # type: ignore[type-arg]
                 await users_client.grant_role(UUID(owner_id_str))
                 logger.info("subscription checkout: granted owner role to {}", owner_id_str)
             except Exception as exc:
-                logger.error("subscription checkout: grant_role failed for {} — {}", owner_id_str, exc)
+                logger.error(
+                    "subscription checkout: grant_role failed for {} — {}",
+                    owner_id_str,
+                    exc,
+                )
         return
 
     payment_intent_id = session.payment_intent or ""
     payment = await payment_crud.mark_paid(session.id, payment_intent_id)
     payment_locale = payment.locale if payment else "en"
 
-    guest_email: str | None = getattr(
-        getattr(session, "customer_details", None), "email", None
-    )
+    guest_email: str | None = getattr(getattr(session, "customer_details", None), "email", None)
     if not guest_email:
         return
 
-    receipt_data = await _build_receipt_data(
-        session, bookings_client, properties_client
-    )
+    receipt_data = await _build_receipt_data(session, bookings_client, properties_client)
 
     if payment_intent_id:
-        stripe_receipt_url = await _fetch_stripe_receipt_url(
-            stripe_client, payment_intent_id
-        )
+        stripe_receipt_url = await _fetch_stripe_receipt_url(stripe_client, payment_intent_id)
         if stripe_receipt_url:
             receipt_data["download_receipt_url"] = stripe_receipt_url
 
@@ -556,9 +577,7 @@ async def _build_receipt_data(  # type: ignore[type-arg]
     currency = currency.upper() if isinstance(currency, str) else "EUR"
 
     data: dict = {
-        "receipt_id": str(session.id)[-8:].upper()
-        if isinstance(session.id, str)
-        else "",
+        "receipt_id": str(session.id)[-8:].upper() if isinstance(session.id, str) else "",
         "payment_date": datetime.now(UTC).strftime("%d %B %Y"),
         "currency": currency,
         "total_amount": f"{amount_cents / 100:.2f}",
@@ -578,14 +597,10 @@ async def _build_receipt_data(  # type: ignore[type-arg]
         booking_id = UUID(booking_id_str)
         booking = await bookings_client.get_booking_as_admin(booking_id)
     except ValueError as exc:
-        logger.warning(
-            "payment_receipt: invalid booking_id {} — {}", booking_id_str, exc
-        )
+        logger.warning("payment_receipt: invalid booking_id {} — {}", booking_id_str, exc)
         return data
     except Exception as exc:
-        logger.error(
-            "payment_receipt: could not fetch booking {} — {}", booking_id_str, exc
-        )
+        logger.error("payment_receipt: could not fetch booking {} — {}", booking_id_str, exc)
         return data
 
     if not booking:
@@ -605,9 +620,7 @@ async def _build_receipt_data(  # type: ignore[type-arg]
     try:
         from datetime import date as _date
 
-        num_nights = (
-            _date.fromisoformat(str(end)) - _date.fromisoformat(str(start))
-        ).days
+        num_nights = (_date.fromisoformat(str(end)) - _date.fromisoformat(str(start))).days
         data["num_nights"] = str(num_nights)
     except (ValueError, TypeError) as exc:
         logger.warning(
@@ -630,9 +643,7 @@ async def _build_receipt_data(  # type: ignore[type-arg]
                 data["property_name"] = name
             data["property_id"] = str(property_id)
         except (ValueError, Exception):
-            logger.warning(
-                "payment_receipt: could not fetch property name for {}", property_id_str
-            )
+            logger.warning("payment_receipt: could not fetch property name for {}", property_id_str)
 
     return data
 
@@ -663,11 +674,16 @@ async def _handle_session_expired(session, bookings_client: BookingsClient) -> N
 async def _handle_charge_refunded(charge) -> None:  # type: ignore[type-arg]
     """Sync refund status from Stripe.
 
-    Also triggered by manual refunds issued via the Stripe Dashboard.
+    Also triggered by manual (incl. partial) refunds issued via the Stripe
+    Dashboard, so the recorded amount and status reflect Stripe's truth.
     """
     payment_intent_id = charge.payment_intent
     if payment_intent_id:
-        await payment_crud.mark_refunded(payment_intent_id)
+        refunded_amount = Decimal(charge.amount_refunded) / 100
+        is_full = bool(getattr(charge, "refunded", False)) or (
+            charge.amount_refunded >= charge.amount
+        )
+        await payment_crud.mark_refunded(payment_intent_id, refunded_amount, is_full)
 
 
 async def _handle_payment_intent_failed(pi) -> None:  # type: ignore[type-arg]
@@ -704,15 +720,15 @@ async def _handle_subscription_updated(  # type: ignore[type-arg]
         new_status = SubscriptionStatus.INCOMPLETE
 
     period_end_ts = getattr(subscription, "current_period_end", None)
-    current_period_end = (
-        datetime.fromtimestamp(period_end_ts, tz=UTC) if period_end_ts else None
-    )
+    current_period_end = datetime.fromtimestamp(period_end_ts, tz=UTC) if period_end_ts else None
 
     plan_slug = getattr(getattr(subscription, "metadata", None), "plan_slug", None)
     plan = await subscription_crud.get_plan_by_slug(plan_slug) if plan_slug else None
     if plan is None:
         logger.warning(
-            "subscription_webhook: unknown plan_slug {} for owner {}", plan_slug, owner_id_str
+            "subscription_webhook: unknown plan_slug {} for owner {}",
+            plan_slug,
+            owner_id_str,
         )
         return
 
@@ -728,7 +744,10 @@ async def _handle_subscription_updated(  # type: ignore[type-arg]
         cancel_at_period_end=cancel_at_period_end,
     )
 
-    if new_status in (SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING) and not cancel_at_period_end:
+    if (
+        new_status in (SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING)
+        and not cancel_at_period_end
+    ):
         user = await users_client.get_user(UUID(owner_id_str))
         owner_email: str | None = user.get("email") if user else None
         owner_locale: str = user.get("locale", "bg") if user else "bg"
@@ -780,8 +799,7 @@ async def abandon_checkout(
         )
 
     is_admin = (
-        PaymentScope.ADMIN in current_user.scopes
-        or PaymentScope.ADMIN_WRITE in current_user.scopes
+        PaymentScope.ADMIN in current_user.scopes or PaymentScope.ADMIN_WRITE in current_user.scopes
     )
     if not is_admin and payment.user_id != current_user.id:
         raise HTTPException(

@@ -22,9 +22,7 @@ class ConnectCRUD:
             existing.stripe_account_id = stripe_account_id
             existing.verified = verified
             existing.transfers_active = transfers_active
-            await existing.save(
-                update_fields=["stripe_account_id", "verified", "transfers_active"]
-            )
+            await existing.save(update_fields=["stripe_account_id", "verified", "transfers_active"])
             return existing
         return await OwnerStripeAccount.create(
             owner_id=owner_id,
@@ -33,9 +31,7 @@ class ConnectCRUD:
             transfers_active=transfers_active,
         )
 
-    async def update_transfers_active(
-        self, stripe_account_id: str, transfers_active: bool
-    ) -> None:
+    async def update_transfers_active(self, stripe_account_id: str, transfers_active: bool) -> None:
         """Called by the v2.core.account.updated webhook to flip transfers_active and verified."""
         await OwnerStripeAccount.filter(stripe_account_id=stripe_account_id).update(
             transfers_active=transfers_active,

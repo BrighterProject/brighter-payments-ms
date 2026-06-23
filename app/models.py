@@ -8,6 +8,7 @@ class PaymentStatus(StrEnum):
     PENDING = "pending"  # Checkout Session created, awaiting customer payment
     PAID = "paid"  # checkout.session.completed received
     REFUNDED = "refunded"  # Full refund issued to customer
+    PARTIALLY_REFUNDED = "partially_refunded"  # Partial refund issued to customer
     FAILED = "failed"  # Checkout Session expired without payment
 
 
@@ -25,6 +26,8 @@ class Payment(Model):
 
     # Monetary snapshot — always fetched from bookings-ms, never from the client
     amount = fields.DecimalField(max_digits=10, decimal_places=2)
+    # Amount refunded to the customer; null until a refund is issued.
+    refunded_amount = fields.DecimalField(max_digits=10, decimal_places=2, null=True)
     currency = fields.CharField(max_length=3, default="EUR")
 
     status = fields.CharEnumField(PaymentStatus, default=PaymentStatus.PENDING)
@@ -84,7 +87,9 @@ class OwnerSubscription(Model):
     id = fields.UUIDField(primary_key=True)
     owner_id = fields.UUIDField(unique=True)
     plan = fields.ForeignKeyField(
-        "models.SubscriptionPlan", related_name="subscriptions", on_delete=fields.RESTRICT
+        "models.SubscriptionPlan",
+        related_name="subscriptions",
+        on_delete=fields.RESTRICT,
     )
     status = fields.CharEnumField(SubscriptionStatus, default=SubscriptionStatus.INCOMPLETE)
     stripe_customer_id = fields.CharField(max_length=255, null=True)

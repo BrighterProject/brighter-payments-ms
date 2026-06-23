@@ -38,9 +38,7 @@ stripe_cancel_url = os.environ.get(
 )
 
 # How long the Stripe Checkout page stays valid before expiring (minutes)
-stripe_checkout_expires_minutes = int(
-    os.environ.get("STRIPE_CHECKOUT_EXPIRES_MINUTES", "30")
-)
+stripe_checkout_expires_minutes = int(os.environ.get("STRIPE_CHECKOUT_EXPIRES_MINUTES", "30"))
 
 stripe_connect_refresh_uri = os.environ.get(
     "STRIPE_CONNECT_REFRESH_URI",
@@ -52,9 +50,7 @@ stripe_connect_settings_url = os.environ.get(
 )
 
 # Platform fee charged on each payment routed to a connected account (percentage)
-stripe_platform_fee_percent = float(
-    os.environ.get("STRIPE_PLATFORM_FEE_PERCENT", "10.0")
-)
+stripe_platform_fee_percent = float(os.environ.get("STRIPE_PLATFORM_FEE_PERCENT", "10.0"))
 
 users_ms_url = os.environ.get("USERS_MS_URL", "http://localhost:8000")
 

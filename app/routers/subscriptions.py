@@ -1,13 +1,11 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from loguru import logger
 from stripe import StripeClient
 
 from app import settings
 from app.crud import subscription_crud
 from app.deps import CurrentUser, get_current_user, get_stripe_client, require_scopes
-from app.utils import append_query_params
 from app.schemas import (
     OwnerSubscriptionResponse,
     PortalResponse,
@@ -15,6 +13,7 @@ from app.schemas import (
     SubscriptionPlanResponse,
 )
 from app.scopes import PaymentScope
+from app.utils import append_query_params
 
 router = APIRouter(prefix="/payments/subscriptions", tags=["subscriptions"])
 
@@ -69,16 +68,20 @@ async def subscribe(
     )
     cancel_url = settings.stripe_subscription_cancel_url.replace("{locale}", locale)
 
-    session = stripe_client.v1.checkout.sessions.create(params={
-        "mode": "subscription",
-        "line_items": [{"price": plan.stripe_price_id, "quantity": 1}],
-        "customer_email": current_user.username,
-        "metadata": {"owner_id": str(current_user.id), "plan_slug": plan_slug},
-        "subscription_data": {"metadata": {"owner_id": str(current_user.id), "plan_slug": plan_slug}},
-        "client_reference_id": str(current_user.id),
-        "success_url": success_url,
-        "cancel_url": cancel_url,
-    })
+    session = stripe_client.v1.checkout.sessions.create(
+        params={
+            "mode": "subscription",
+            "line_items": [{"price": plan.stripe_price_id, "quantity": 1}],
+            "customer_email": current_user.username,
+            "metadata": {"owner_id": str(current_user.id), "plan_slug": plan_slug},
+            "subscription_data": {
+                "metadata": {"owner_id": str(current_user.id), "plan_slug": plan_slug}
+            },
+            "client_reference_id": str(current_user.id),
+            "success_url": success_url,
+            "cancel_url": cancel_url,
+        }
+    )
     return SubscriptionCheckoutResponse(checkout_url=session.url, session_id=session.id)
 
 
@@ -90,12 +93,17 @@ async def customer_portal(
 ) -> PortalResponse:
     sub = await subscription_crud.get_owner_subscription(current_user.id)
     if sub is None or sub.stripe_customer_id is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No Stripe customer on record.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No Stripe customer on record.",
+        )
     return_url = settings.stripe_portal_return_url.replace("{locale}", locale)
-    session = stripe_client.v1.billing_portal.sessions.create(params={
-        "customer": sub.stripe_customer_id,
-        "return_url": return_url,
-    })
+    session = stripe_client.v1.billing_portal.sessions.create(
+        params={
+            "customer": sub.stripe_customer_id,
+            "return_url": return_url,
+        }
+    )
     return PortalResponse(portal_url=session.url)
 
 

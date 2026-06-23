@@ -86,9 +86,7 @@ async def connect_status(
 async def onboard_connect(
     current_user: CurrentUser = Depends(require_owner),
     stripe_client: StripeClient = Depends(get_stripe_client),
-    entity_type: Literal[
-        "company", "government_entity", "individual", "non_profit"
-    ] = "individual",
+    entity_type: Literal["company", "government_entity", "individual", "non_profit"] = "individual",
     country: CountryAlpha2 = CountryAlpha2("BG"),
     upfront: bool = False,  # whether to collect eventually_due
 ) -> OnboardResponse:
@@ -160,9 +158,7 @@ async def refresh_stripe_onboarding(
     account = await connect_crud.get_by_owner(current_user.id)
 
     if not account:
-        return RedirectResponse(
-            url=settings.stripe_connect_settings_url, status_code=303
-        )
+        return RedirectResponse(url=settings.stripe_connect_settings_url, status_code=303)
 
     account_link = stripe_client.v2.core.account_links.create(
         {

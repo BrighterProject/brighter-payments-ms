@@ -16,7 +16,7 @@ from app.models import (
     SubscriptionPlan,
     SubscriptionStatus,
 )
-from app.schemas import BankTransferResponse, OwnerBankAccountResponse, PaymentResponse
+from app.schemas import OwnerBankAccountResponse, PaymentResponse
 
 
 class PaymentCRUD(CRUD[Payment, PaymentResponse]):  # type: ignore
@@ -59,17 +59,13 @@ class PaymentCRUD(CRUD[Payment, PaymentResponse]):  # type: ignore
         """Return the raw model instance for internal webhook processing."""
         return await Payment.get_or_none(stripe_session_id=session_id)
 
-    async def mark_paid(
-        self, session_id: str, payment_intent_id: str
-    ) -> Payment | None:
+    async def mark_paid(self, session_id: str, payment_intent_id: str) -> Payment | None:
         inst = await Payment.get_or_none(stripe_session_id=session_id)
         if inst is None:
             return None
         inst.status = PaymentStatus.PAID
         inst.stripe_payment_intent_id = payment_intent_id
-        await inst.save(
-            update_fields=["status", "stripe_payment_intent_id", "updated_at"]
-        )
+        await inst.save(update_fields=["status", "stripe_payment_intent_id", "updated_at"])
         return inst
 
     async def mark_failed(self, session_id: str) -> Payment | None:
@@ -80,15 +76,27 @@ class PaymentCRUD(CRUD[Payment, PaymentResponse]):  # type: ignore
         await inst.save(update_fields=["status", "updated_at"])
         return inst
 
-    async def mark_refunded(self, payment_intent_id: str) -> Payment | None:
+    async def mark_refunded(
+        self,
+        payment_intent_id: str,
+        refunded_amount: Decimal | None = None,
+        is_full: bool = True,
+    ) -> Payment | None:
+        """Record a refund against a paid payment.
+
+        Idempotent across the endpoint and the ``charge.refunded`` webhook: a
+        payment already in ``PARTIALLY_REFUNDED`` can still be escalated to a
+        larger or full refund.
+        """
         inst = await Payment.get_or_none(
             stripe_payment_intent_id=payment_intent_id,
-            status=PaymentStatus.PAID,
+            status__in=[PaymentStatus.PAID, PaymentStatus.PARTIALLY_REFUNDED],
         )
         if inst is None:
             return None
-        inst.status = PaymentStatus.REFUNDED
-        await inst.save(update_fields=["status", "updated_at"])
+        inst.status = PaymentStatus.REFUNDED if is_full else PaymentStatus.PARTIALLY_REFUNDED
+        inst.refunded_amount = refunded_amount if refunded_amount is not None else inst.amount
+        await inst.save(update_fields=["status", "refunded_amount", "updated_at"])
         return inst
 
     async def list_payments(
@@ -173,7 +181,10 @@ class SubscriptionCRUD:
     async def can_add_listing(self, owner_id: UUID, current_count: int) -> bool:
         """Return True if owner has an active subscription with quota remaining."""
         sub = await self.get_owner_subscription(owner_id)
-        if sub is None or sub.status not in (SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING):
+        if sub is None or sub.status not in (
+            SubscriptionStatus.ACTIVE,
+            SubscriptionStatus.TRIALING,
+        ):
             return False
         if sub.plan.max_listings == -1:
             return True

@@ -35,7 +35,12 @@ def _get_system_admin() -> "CurrentUser":
         _SYSTEM_ADMIN = CurrentUser(
             id=UUID("00000000-0000-0000-0000-000000000001"),
             username="payments-ms",
-            scopes=["admin:bookings:read", "admin:bookings:write", "admin:scopes", "admin:notifications:write"],
+            scopes=[
+                "admin:bookings:read",
+                "admin:bookings:write",
+                "admin:scopes",
+                "admin:notifications:write",
+            ],
         )
     return _SYSTEM_ADMIN
 
@@ -172,9 +177,7 @@ class BookingsClient:
 
     async def get_booking(self, booking_id: UUID, user: CurrentUser) -> dict | None:
         """Return booking dict or None on 404. Raises HTTPException on 5xx."""
-        resp = await self._client.get(
-            f"/bookings/{booking_id}", headers=self._headers(user)
-        )
+        resp = await self._client.get(f"/bookings/{booking_id}", headers=self._headers(user))
         if resp.status_code == 404:
             return None
         if resp.status_code >= 400:
@@ -253,10 +256,20 @@ class NotificationsClient:
         }
 
     async def send(
-        self, *, to: str, notification_type: str, data: dict | None = None, locale: str | None = None
+        self,
+        *,
+        to: str,
+        notification_type: str,
+        data: dict | None = None,
+        locale: str | None = None,
     ) -> None:
         try:
-            logger.debug("Sending notification from payments-ms | type={} to={} data={}", notification_type, to, data)
+            logger.debug(
+                "Sending notification from payments-ms | type={} to={} data={}",
+                notification_type,
+                to,
+                data,
+            )
             await self._client.post(
                 "/notifications/dispatch",
                 json={
@@ -268,9 +281,18 @@ class NotificationsClient:
                 },
                 headers=self._headers(),
             )
-            logger.debug("Successfully sent notification from payments-ms | type={} to={}", notification_type, to)
+            logger.debug(
+                "Successfully sent notification from payments-ms | type={} to={}",
+                notification_type,
+                to,
+            )
         except Exception as exc:
-            logger.error("Failed to send notification from payments-ms | type={} to={} error={}", notification_type, to, exc)
+            logger.error(
+                "Failed to send notification from payments-ms | type={} to={} error={}",
+                notification_type,
+                to,
+                exc,
+            )
 
 
 _notifications_client = NotificationsClient()
@@ -364,9 +386,7 @@ class UsersClient:
     async def get_user(self, user_id: UUID) -> dict | None:
         """Return user dict or None on 404."""
         try:
-            resp = await self._client.get(
-                f"/users/{user_id}", headers=self._headers()
-            )
+            resp = await self._client.get(f"/users/{user_id}", headers=self._headers())
             if resp.status_code == 404:
                 return None
             if resp.status_code >= 400:
