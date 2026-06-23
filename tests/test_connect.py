@@ -69,13 +69,13 @@ def anon_app():
 
 
 # ---------------------------------------------------------------------------
-# GET /payments-connect/status
+# GET /payments/connect/status
 # ---------------------------------------------------------------------------
 
 
 def test_status_not_connected(owner_client):
     with patch("app.routers._connect.connect_crud.get_by_owner", AsyncMock(return_value=None)):
-        resp = owner_client.get("/payments-connect/status")
+        resp = owner_client.get("/payments/connect/status")
     assert resp.status_code == 200
     assert resp.json() == {
         "connected": False,
@@ -101,7 +101,7 @@ def test_status_connected_verified(owner_client):
         "app.routers._connect.connect_crud.get_by_owner",
         AsyncMock(return_value=mock_account),
     ):
-        resp = owner_client.get("/payments-connect/status")
+        resp = owner_client.get("/payments/connect/status")
 
     assert resp.status_code == 200
     data = resp.json()
@@ -126,7 +126,7 @@ def test_status_connected_pending(owner_client):
         "app.routers._connect.connect_crud.get_by_owner",
         AsyncMock(return_value=mock_account),
     ):
-        resp = owner_client.get("/payments-connect/status")
+        resp = owner_client.get("/payments/connect/status")
 
     data = resp.json()
     assert data["connected"] is True
@@ -149,19 +149,19 @@ def test_status_shows_requirements_outstanding(owner_client):
         "app.routers._connect.connect_crud.get_by_owner",
         AsyncMock(return_value=mock_account),
     ):
-        resp = owner_client.get("/payments-connect/status")
+        resp = owner_client.get("/payments/connect/status")
 
     assert resp.json()["requirements_outstanding"] is True
 
 
 def test_status_requires_auth(anon_app):
     client = TestClient(anon_app, raise_server_exceptions=False)
-    resp = client.get("/payments-connect/status")
+    resp = client.get("/payments/connect/status")
     assert resp.status_code == 422  # missing X-User-Id header
 
 
 # ---------------------------------------------------------------------------
-# POST /payments-connect/onboard
+# POST /payments/connect/onboard
 # ---------------------------------------------------------------------------
 
 
@@ -191,7 +191,7 @@ def test_onboard_creates_new_account_when_not_connected(owner_client):
             Mock(return_value=account_link),
         ),
     ):
-        resp = client.post("/payments-connect/onboard")
+        resp = client.post("/payments/connect/onboard")
 
     assert resp.status_code == 200
     data = resp.json()
@@ -225,7 +225,7 @@ def test_onboard_reuses_existing_account_when_connected(owner_client):
             Mock(return_value=account_link),
         ),
     ):
-        resp = client.post("/payments-connect/onboard")
+        resp = client.post("/payments/connect/onboard")
 
     sc.v2.core.accounts.create.assert_not_called()
     assert resp.status_code == 200
@@ -234,12 +234,12 @@ def test_onboard_reuses_existing_account_when_connected(owner_client):
 
 def test_onboard_requires_auth(anon_app):
     client = TestClient(anon_app, raise_server_exceptions=False)
-    resp = client.post("/payments-connect/onboard")
+    resp = client.post("/payments/connect/onboard")
     assert resp.status_code == 422
 
 
 # ---------------------------------------------------------------------------
-# DELETE /payments-connect
+# DELETE /payments/connect
 # ---------------------------------------------------------------------------
 
 
@@ -259,7 +259,7 @@ def test_disconnect_removes_account(owner_client):
             AsyncMock(return_value=True),
         ),
     ):
-        resp = owner_client.delete("/payments-connect")
+        resp = owner_client.delete("/payments/connect")
 
     assert resp.status_code == 204
 
@@ -269,7 +269,7 @@ def test_disconnect_404_when_not_connected(owner_client):
         "app.routers._connect.connect_crud.get_by_owner",
         AsyncMock(return_value=None),
     ):
-        resp = owner_client.delete("/payments-connect")
+        resp = owner_client.delete("/payments/connect")
     assert resp.status_code == 404
 
 
@@ -296,7 +296,7 @@ def test_disconnect_still_removes_if_stripe_delete_fails(owner_client):
         ),
         patch("app.routers._connect.connect_crud.delete_by_owner", delete_mock),
     ):
-        resp = client.delete("/payments-connect")
+        resp = client.delete("/payments/connect")
 
     assert resp.status_code == 204
     delete_mock.assert_called_once()
@@ -304,7 +304,7 @@ def test_disconnect_still_removes_if_stripe_delete_fails(owner_client):
 
 def test_disconnect_requires_auth(anon_app):
     client = TestClient(anon_app, raise_server_exceptions=False)
-    resp = client.delete("/payments-connect")
+    resp = client.delete("/payments/connect")
     assert resp.status_code == 422
 
 
@@ -454,7 +454,7 @@ def test_require_owner_allows_admin():
 
 
 # ---------------------------------------------------------------------------
-# POST /payments-connect/webhook  (Connect / V2 event destination)
+# POST /payments/connect/webhook  (Connect / V2 event destination)
 # ---------------------------------------------------------------------------
 
 
@@ -511,7 +511,7 @@ class TestConnectWebhook:
             ) as mock_update,
         ):
             resp = client.post(
-                "/payments-connect/webhook",
+                "/payments/connect/webhook",
                 content=b'{"type":"v2.core.account.updated"}',
                 headers={"Stripe-Signature": "t=1,v1=abc"},
             )
@@ -534,7 +534,7 @@ class TestConnectWebhook:
             ) as mock_update,
         ):
             resp = client.post(
-                "/payments-connect/webhook",
+                "/payments/connect/webhook",
                 content=b"{}",
                 headers={"Stripe-Signature": "t=1,v1=abc"},
             )
@@ -574,7 +574,7 @@ class TestConnectWebhook:
             ),
         ):
             resp = client.post(
-                "/payments-connect/webhook",
+                "/payments/connect/webhook",
                 content=b"{}",
                 headers={"Stripe-Signature": "t=1,v1=abc"},
             )
@@ -596,7 +596,7 @@ class TestConnectWebhook:
             patch("app.routers._connect.connect_crud.update_transfers_active", AsyncMock()),
         ):
             resp = client.post(
-                "/payments-connect/webhook",
+                "/payments/connect/webhook",
                 content=b"{}",
                 headers={"Stripe-Signature": "t=1,v1=abc"},
             )
@@ -617,7 +617,7 @@ class TestConnectWebhook:
         )
 
         resp = client.post(
-            "/payments-connect/webhook",
+            "/payments/connect/webhook",
             content=b"bad payload",
             headers={"Stripe-Signature": "invalid"},
         )
@@ -632,7 +632,7 @@ class TestConnectWebhook:
         )
 
         resp = client.post(
-            "/payments-connect/webhook",
+            "/payments/connect/webhook",
             content=b"not json",
             headers={"Stripe-Signature": "t=1,v1=abc"},
         )
@@ -643,7 +643,7 @@ class TestConnectWebhook:
         client = TestClient(build_connect_app(make_property_owner(), stripe_client=sc))
 
         resp = client.post(
-            "/payments-connect/webhook",
+            "/payments/connect/webhook",
             content=b"{}",
             headers={"Stripe-Signature": "t=1,v1=abc"},
         )
