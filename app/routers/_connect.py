@@ -14,7 +14,7 @@ from app.crud_connect import connect_crud
 from app.deps import CurrentUser, get_stripe_client, require_owner
 from app.schemas import ConnectStatusResponse, OnboardResponse, UpdateResponse
 
-router = APIRouter(prefix="/payments/connect", tags=["stripe-connect"])
+router = APIRouter(prefix="/payments-connect", tags=["stripe-connect"])
 
 
 def _requirements_summary(requirements: Any) -> tuple[bool, bool]:
