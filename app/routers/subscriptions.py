@@ -82,7 +82,7 @@ async def subscribe(
             "cancel_url": cancel_url,
         }
     )
-    return SubscriptionCheckoutResponse(checkout_url=session.url, session_id=session.id)
+    return SubscriptionCheckoutResponse(checkout_url=session.url, session_id=session.id)  # type: ignore
 
 
 @router.post("/portal", response_model=PortalResponse)

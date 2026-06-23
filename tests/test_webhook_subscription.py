@@ -1,13 +1,17 @@
 """Unit tests for _handle_subscription_updated scope grant + welcome email logic."""
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4, UUID
+from uuid import UUID, uuid4
 
 import pytest
 
 from app.models import SubscriptionStatus
-from app.routers.payments import _handle_subscription_deleted, _handle_subscription_updated
+from app.routers.payments import (
+    _handle_subscription_deleted,
+    _handle_subscription_updated,
+)
 
 
 def _make_subscription(
@@ -32,7 +36,9 @@ def _make_subscription(
 def _make_collaborators(user: dict | None = None):
     mock_plan = MagicMock(id=uuid4())
     users_client = MagicMock()
-    users_client.get_user = AsyncMock(return_value=user or {"email": "owner@test.com", "locale": "bg"})
+    users_client.get_user = AsyncMock(
+        return_value=user or {"email": "owner@test.com", "locale": "bg"}
+    )
     users_client.grant_role = AsyncMock()
     users_client.revoke_owner = AsyncMock()
     notifications_client = MagicMock()
@@ -46,6 +52,7 @@ def _make_collaborators(user: dict | None = None):
 # Contract: SubscriptionStatus string values must match Stripe's API exactly.
 # Stripe uses single-L "canceled" — a mismatch here silently misfires webhooks.
 # ---------------------------------------------------------------------------
+
 
 def test_subscription_status_string_values_match_stripe():
     assert SubscriptionStatus.ACTIVE == "active"
@@ -63,6 +70,7 @@ def test_subscription_status_canceled_parses_from_stripe_string():
 def test_subscription_status_rejects_double_l():
     """Ensure the old double-L typo is not silently accepted."""
     import pytest as _pytest
+
     with _pytest.raises(ValueError):
         SubscriptionStatus("cancelled")
 
@@ -70,6 +78,7 @@ def test_subscription_status_rejects_double_l():
 # ---------------------------------------------------------------------------
 # upsert_subscription is called with the correct parsed status from Stripe.
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.anyio
 async def test_upsert_receives_correct_status_for_active():
@@ -79,10 +88,18 @@ async def test_upsert_receives_correct_status_for_active():
     upsert_mock = AsyncMock()
 
     with (
-        patch("app.routers.payments.subscription_crud.get_plan_by_slug", new=AsyncMock(return_value=mock_plan)),
-        patch("app.routers.payments.subscription_crud.upsert_subscription", new=upsert_mock),
+        patch(
+            "app.routers.payments.subscription_crud.get_plan_by_slug",
+            new=AsyncMock(return_value=mock_plan),
+        ),
+        patch(
+            "app.routers.payments.subscription_crud.upsert_subscription",
+            new=upsert_mock,
+        ),
     ):
-        await _handle_subscription_updated(sub, users_client, notifications_client, background_tasks)
+        await _handle_subscription_updated(
+            sub, users_client, notifications_client, background_tasks
+        )
 
     assert upsert_mock.call_args.kwargs["status"] == SubscriptionStatus.ACTIVE
 
@@ -95,10 +112,18 @@ async def test_upsert_receives_correct_status_for_past_due():
     upsert_mock = AsyncMock()
 
     with (
-        patch("app.routers.payments.subscription_crud.get_plan_by_slug", new=AsyncMock(return_value=mock_plan)),
-        patch("app.routers.payments.subscription_crud.upsert_subscription", new=upsert_mock),
+        patch(
+            "app.routers.payments.subscription_crud.get_plan_by_slug",
+            new=AsyncMock(return_value=mock_plan),
+        ),
+        patch(
+            "app.routers.payments.subscription_crud.upsert_subscription",
+            new=upsert_mock,
+        ),
     ):
-        await _handle_subscription_updated(sub, users_client, notifications_client, background_tasks)
+        await _handle_subscription_updated(
+            sub, users_client, notifications_client, background_tasks
+        )
 
     assert upsert_mock.call_args.kwargs["status"] == SubscriptionStatus.PAST_DUE
     users_client.grant_role.assert_not_called()
@@ -108,6 +133,7 @@ async def test_upsert_receives_correct_status_for_past_due():
 # customer.subscription.deleted: handler correctly cancels and revokes scopes.
 # (Webhook dispatcher routing is tested in test_payments.py via HTTP client.)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.anyio
 async def test_subscription_deleted_no_grant_no_welcome():
@@ -143,7 +169,9 @@ async def test_active_subscription_grants_owner_role():
             new=AsyncMock(),
         ),
     ):
-        await _handle_subscription_updated(sub, users_client, notifications_client, background_tasks)
+        await _handle_subscription_updated(
+            sub, users_client, notifications_client, background_tasks
+        )
 
     users_client.grant_role.assert_called_once_with(UUID(owner_id))
     background_tasks.add_task.assert_called_once()
@@ -165,7 +193,9 @@ async def test_trialing_subscription_grants_owner_role():
             new=AsyncMock(),
         ),
     ):
-        await _handle_subscription_updated(sub, users_client, notifications_client, background_tasks)
+        await _handle_subscription_updated(
+            sub, users_client, notifications_client, background_tasks
+        )
 
     users_client.grant_role.assert_called_once_with(UUID(owner_id))
 
@@ -186,7 +216,9 @@ async def test_incomplete_subscription_skips_grant():
             new=AsyncMock(),
         ),
     ):
-        await _handle_subscription_updated(sub, users_client, notifications_client, background_tasks)
+        await _handle_subscription_updated(
+            sub, users_client, notifications_client, background_tasks
+        )
 
     users_client.grant_role.assert_not_called()
     background_tasks.add_task.assert_not_called()
@@ -210,7 +242,9 @@ async def test_welcome_email_uses_user_locale():
             new=AsyncMock(),
         ),
     ):
-        await _handle_subscription_updated(sub, users_client, notifications_client, background_tasks)
+        await _handle_subscription_updated(
+            sub, users_client, notifications_client, background_tasks
+        )
 
     call_kwargs = background_tasks.add_task.call_args.kwargs
     assert call_kwargs.get("locale") == "en"
@@ -237,7 +271,9 @@ async def test_unknown_plan_slug_returns_early():
         "app.routers.payments.subscription_crud.get_plan_by_slug",
         new=AsyncMock(return_value=None),
     ):
-        await _handle_subscription_updated(sub, users_client, notifications_client, background_tasks)
+        await _handle_subscription_updated(
+            sub, users_client, notifications_client, background_tasks
+        )
 
     users_client.grant_role.assert_not_called()
 
@@ -260,7 +296,9 @@ async def test_cancel_at_period_end_persisted_and_no_grant():
             new=upsert_mock,
         ),
     ):
-        await _handle_subscription_updated(sub, users_client, notifications_client, background_tasks)
+        await _handle_subscription_updated(
+            sub, users_client, notifications_client, background_tasks
+        )
 
     upsert_mock.assert_called_once()
     call_kwargs = upsert_mock.call_args.kwargs

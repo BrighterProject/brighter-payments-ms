@@ -20,7 +20,7 @@ from app.schemas import OwnerBankAccountResponse, PaymentResponse
 
 
 class PaymentCRUD(CRUD[Payment, PaymentResponse]):  # type: ignore
-    async def create(
+    async def create(  # type: ignore
         self,
         *,
         booking_id: UUID,

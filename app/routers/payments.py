@@ -204,7 +204,7 @@ async def create_checkout(
 
     try:
         session = stripe_client.v1.checkout.sessions.create(
-            params=checkout_params,
+            params=checkout_params,  # type: ignore
             options={"idempotency_key": f"checkout-{payload.booking_id}"},
         )
     except stripe.StripeError as exc:
@@ -235,7 +235,7 @@ async def create_checkout(
     )
 
     return CheckoutResponse(
-        checkout_url=session.url,
+        checkout_url=session.url,  # type: ignore
         session_id=session.id,
         payment_id=payment.id,
     )

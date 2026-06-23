@@ -1,4 +1,5 @@
 """Tests for subscription plan models, CRUD, and router endpoints."""
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -9,8 +10,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.deps import get_current_user, get_stripe_client
-from tests.factories import make_admin, make_property_owner
-
+from tests.factories import PROPERTY_OWNER_ID, make_admin, make_property_owner
 
 # ---------------------------------------------------------------------------
 # Local fixtures — build an app that includes the subscriptions router
@@ -134,6 +134,80 @@ def test_get_my_subscription_not_found(sub_owner_client):
     assert resp.status_code == 404
 
 
+def test_get_my_subscription_found(sub_owner_client):
+    """200: subscription exists and is returned."""
+    mock_sub = MagicMock()
+    mock_sub.id = uuid4()
+    mock_sub.owner_id = uuid4()
+    mock_sub.status = "active"
+    mock_sub.current_period_end = 9999999999
+    mock_sub.cancelled_at = None
+    mock_sub.plan = _make_plan("basic", "Basic", 5, 2500, "price_b")
+
+    with patch("app.routers.subscriptions.subscription_crud") as mock:
+        mock.get_owner_subscription = AsyncMock(return_value=mock_sub)
+        resp = sub_owner_client.get("/payments/subscriptions/me")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "active"
+    assert data["plan"]["slug"] == "basic"
+    assert data["plan"]["max_listings"] == 5
+
+
+# ---------------------------------------------------------------------------
+# GET /payments/subscriptions/can-add-listing
+# ---------------------------------------------------------------------------
+
+
+def test_can_add_listing_with_active_subscription(sub_owner_client):
+    """Owner with active subscription and listings below max can add listing."""
+    with patch("app.routers.subscriptions.subscription_crud") as mock:
+        mock.can_add_listing = AsyncMock(return_value=True)
+        resp = sub_owner_client.get(
+            f"/payments/subscriptions/can-add-listing?owner_id={PROPERTY_OWNER_ID}&current_count=3"
+        )
+
+    assert resp.status_code == 200
+    assert resp.json()["allowed"] is True
+
+
+def test_can_add_listing_at_max_listings(sub_owner_client):
+    """Owner at max listings cannot add more."""
+    with patch("app.routers.subscriptions.subscription_crud") as mock:
+        mock.can_add_listing = AsyncMock(return_value=False)
+        resp = sub_owner_client.get(
+            f"/payments/subscriptions/can-add-listing?owner_id={PROPERTY_OWNER_ID}&current_count=5"
+        )
+
+    assert resp.status_code == 200
+    assert resp.json()["allowed"] is False
+
+
+def test_can_add_listing_no_subscription(sub_owner_client):
+    """Owner without subscription cannot add listing."""
+    with patch("app.routers.subscriptions.subscription_crud") as mock:
+        mock.can_add_listing = AsyncMock(return_value=False)
+        resp = sub_owner_client.get(
+            f"/payments/subscriptions/can-add-listing?owner_id={PROPERTY_OWNER_ID}"
+        )
+
+    assert resp.status_code == 200
+    assert resp.json()["allowed"] is False
+
+
+def test_can_add_listing_past_due_subscription(sub_owner_client):
+    """Owner with past_due subscription can still add listings (grace period)."""
+    with patch("app.routers.subscriptions.subscription_crud") as mock:
+        mock.can_add_listing = AsyncMock(return_value=True)
+        resp = sub_owner_client.get(
+            f"/payments/subscriptions/can-add-listing?owner_id={PROPERTY_OWNER_ID}&current_count=2"
+        )
+
+    assert resp.status_code == 200
+    assert resp.json()["allowed"] is True
+
+
 # ---------------------------------------------------------------------------
 # Task 3 — checkout + portal endpoints
 # ---------------------------------------------------------------------------
@@ -171,6 +245,14 @@ def test_subscribe_enterprise_returns_422(sub_owner_client):
     assert resp.status_code == 422
 
 
+def test_subscribe_plan_not_found_returns_404(sub_owner_client):
+    """The plan-not-found early return is not tested."""
+    with patch("app.routers.subscriptions.subscription_crud") as mock_crud:
+        mock_crud.get_plan_by_slug = AsyncMock(return_value=None)
+        resp = sub_owner_client.post("/payments/subscriptions/checkout?plan_slug=nonexistent")
+    assert resp.status_code == 404
+
+
 # ---------------------------------------------------------------------------
 # Locale support — checkout and portal redirect URLs
 # ---------------------------------------------------------------------------
@@ -178,8 +260,8 @@ def test_subscribe_enterprise_returns_422(sub_owner_client):
 
 def _build_sub_app_with_stripe(current_user):
     """Like _build_sub_app but returns the stripe mock for assertion."""
-    from app.routers.subscriptions import router as sub_router
     from app.deps import get_current_user, get_stripe_client
+    from app.routers.subscriptions import router as sub_router
 
     app = FastAPI()
     app.include_router(sub_router)

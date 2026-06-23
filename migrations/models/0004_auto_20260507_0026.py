@@ -8,11 +8,13 @@ async def add_locale(apps, schema_editor) -> None:
 
 
 async def drop_locale(apps, schema_editor) -> None:
-    await schema_editor._run_sql('ALTER TABLE "payments" DROP COLUMN IF EXISTS "locale";')
+    await schema_editor._run_sql(
+        'ALTER TABLE "payments" DROP COLUMN IF EXISTS "locale";'
+    )
 
 
 class Migration(Migration):
-    dependencies = [('models', '0003_auto_20260506_2345')]
+    dependencies = [("models", "0003_auto_20260506_2345")]
 
     initial = False
 

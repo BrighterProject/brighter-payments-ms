@@ -34,7 +34,7 @@ class Payment(Model):
     locale = fields.CharField(max_length=10, default="en")
     updated_at = fields.DatetimeField(auto_now=True)
 
-    class Meta:  # type: ignore
+    class Meta:
         table = "payments"
         ordering = ["-created_at"]
 
@@ -50,7 +50,7 @@ class OwnerStripeAccount(Model):
     requirements_outstanding = fields.BooleanField(default=False)
     requirements_eventually_due = fields.BooleanField(default=False)
 
-    class Meta:  # type: ignore
+    class Meta:
         table = "owner_stripe_accounts"
 
 
@@ -79,7 +79,7 @@ class SubscriptionPlan(Model):
     stripe_price_id = fields.CharField(max_length=255, null=True)
     is_active = fields.BooleanField(default=True)
 
-    class Meta:  # type: ignore
+    class Meta:
         table = "subscription_plans"
 
 
@@ -98,7 +98,7 @@ class OwnerSubscription(Model):
     cancel_at_period_end = fields.BooleanField(default=False)
     cancelled_at = fields.DatetimeField(null=True)
 
-    class Meta:  # type: ignore
+    class Meta:
         table = "owner_subscriptions"
 
 
@@ -113,7 +113,7 @@ class OwnerBankAccount(Model):
     account_holder = fields.CharField(max_length=200)
     updated_at = fields.DatetimeField(auto_now=True)
 
-    class Meta:  # type: ignore
+    class Meta:
         table = "owner_bank_accounts"
 
 
@@ -138,5 +138,5 @@ class BankTransferPayment(Model):
     reference = fields.CharField(max_length=50)
     updated_at = fields.DatetimeField(auto_now=True)
 
-    class Meta:  # type: ignore
+    class Meta:
         table = "bank_transfer_payments"

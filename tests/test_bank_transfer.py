@@ -16,12 +16,11 @@ from app.routers.bank_transfer import router as bt_router
 from .factories import (
     BOOKING_ID,
     CUSTOMER_ID,
-    PROPERTY_OWNER_ID,
     NOW,
+    PROPERTY_OWNER_ID,
     booking_dict,
     make_customer,
     make_property_owner,
-    make_admin,
 )
 
 CRUD_PATH = "app.routers.bank_transfer.bank_transfer_crud"
@@ -35,6 +34,7 @@ def _make_owner_bank_account():
     m.bank_name = OWNER_BANK["bank_name"]
     m.account_holder = OWNER_BANK["account_holder"]
     return m
+
 
 INTENT_ID = uuid4()
 
@@ -102,6 +102,7 @@ def owner_client():
         )
     )
     mock_bc.confirm_booking = AsyncMock(return_value=True)
+    mock_bc.cancel_booking = AsyncMock(return_value=True)
     app = _build_bt_app(make_property_owner(), bookings_client=mock_bc)
     return TestClient(app, raise_server_exceptions=True)
 
@@ -144,14 +145,14 @@ class TestCreateBankTransferIntent:
                 payment_method="bank_transfer",
             )
         )
-        no_bank_uc = _make_users_client(owner_profile={"id": str(PROPERTY_OWNER_ID), "full_name": "Owner"})
+        no_bank_uc = _make_users_client(
+            owner_profile={"id": str(PROPERTY_OWNER_ID), "full_name": "Owner"}
+        )
         app = _build_bt_app(make_customer(), bookings_client=mock_bc, users_client=no_bank_uc)
         client = TestClient(app, raise_server_exceptions=True)
         with patch(CRUD_PATH), patch(BANK_CRUD_PATH) as bank_mock:
             bank_mock.get_by_owner = AsyncMock(return_value=None)
-            resp = client.post(
-                "/payments/bank-transfer/", json={"booking_id": str(BOOKING_ID)}
-            )
+            resp = client.post("/payments/bank-transfer/", json={"booking_id": str(BOOKING_ID)})
         assert resp.status_code == 422
         assert "bank account" in resp.json()["detail"].lower()
 
@@ -164,9 +165,7 @@ class TestCreateBankTransferIntent:
         )
         app = _build_bt_app(other_user, bookings_client=mock_bc)
         client = TestClient(app, raise_server_exceptions=True)
-        resp = client.post(
-            "/payments/bank-transfer/", json={"booking_id": str(BOOKING_ID)}
-        )
+        resp = client.post("/payments/bank-transfer/", json={"booking_id": str(BOOKING_ID)})
         assert resp.status_code == 403
 
     def test_booking_not_found_returns_404(self):
@@ -174,9 +173,7 @@ class TestCreateBankTransferIntent:
         mock_bc.get_booking = AsyncMock(return_value=None)
         app = _build_bt_app(make_customer(), bookings_client=mock_bc)
         client = TestClient(app, raise_server_exceptions=True)
-        resp = client.post(
-            "/payments/bank-transfer/", json={"booking_id": str(BOOKING_ID)}
-        )
+        resp = client.post("/payments/bank-transfer/", json={"booking_id": str(BOOKING_ID)})
         assert resp.status_code == 404
 
     def test_non_pending_booking_returns_422(self):
@@ -186,9 +183,7 @@ class TestCreateBankTransferIntent:
         )
         app = _build_bt_app(make_customer(), bookings_client=mock_bc)
         client = TestClient(app, raise_server_exceptions=True)
-        resp = client.post(
-            "/payments/bank-transfer/", json={"booking_id": str(BOOKING_ID)}
-        )
+        resp = client.post("/payments/bank-transfer/", json={"booking_id": str(BOOKING_ID)})
         assert resp.status_code == 422
 
 
@@ -215,3 +210,264 @@ class TestConfirmBankTransfer:
             mock.get_by_id = AsyncMock(return_value=None)
             resp = owner_client.post(f"/payments/bank-transfer/{INTENT_ID}/confirm")
         assert resp.status_code == 404
+
+    def test_non_owner_non_admin_cannot_confirm(self):
+        """403: non-owner, non-admin user cannot confirm a bank transfer."""
+        random_user = make_customer(user_id=uuid4())
+        mock_bc = MagicMock()
+        mock_bc.get_booking = AsyncMock(
+            return_value=booking_dict(
+                user_id=str(CUSTOMER_ID),
+                property_owner_id=str(PROPERTY_OWNER_ID),
+                status="pending",
+                payment_method="bank_transfer",
+            )
+        )
+        app = _build_bt_app(random_user, bookings_client=mock_bc)
+        client = TestClient(app, raise_server_exceptions=True)
+
+        with patch(CRUD_PATH) as mock:
+            mock.get_by_id = AsyncMock(
+                return_value=MagicMock(
+                    id=INTENT_ID,
+                    property_owner_id=PROPERTY_OWNER_ID,
+                    status=BankTransferStatus.PENDING,
+                    booking_id=BOOKING_ID,
+                )
+            )
+            resp = client.post(f"/payments/bank-transfer/{INTENT_ID}/confirm")
+        assert resp.status_code == 403
+
+    def test_confirm_when_status_not_pending_returns_409(self, owner_client):
+        """409: intent already confirmed or cancelled cannot be confirmed again."""
+        with patch(CRUD_PATH) as mock:
+            mock.get_by_id = AsyncMock(
+                return_value=MagicMock(
+                    id=INTENT_ID,
+                    property_owner_id=PROPERTY_OWNER_ID,
+                    status=BankTransferStatus.CONFIRMED,
+                    booking_id=BOOKING_ID,
+                )
+            )
+            resp = owner_client.post(f"/payments/bank-transfer/{INTENT_ID}/confirm")
+        assert resp.status_code == 409
+
+
+# ===========================================================================
+# POST /payments/bank-transfer/{intent_id}/cancel
+# ===========================================================================
+
+
+class TestCancelBankTransfer:
+    def test_owner_can_cancel(self, owner_client):
+        """200: owner cancels intent and booking is cancelled via bookings-ms."""
+        with patch(CRUD_PATH) as mock:
+            mock.get_by_id = AsyncMock(
+                return_value=MagicMock(
+                    id=INTENT_ID,
+                    property_owner_id=PROPERTY_OWNER_ID,
+                    status=BankTransferStatus.PENDING,
+                    booking_id=BOOKING_ID,
+                )
+            )
+            mock.cancel_intent = AsyncMock(return_value=_bank_transfer_response(status="cancelled"))
+            resp = owner_client.post(f"/payments/bank-transfer/{INTENT_ID}/cancel")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "cancelled"
+
+    def test_intent_not_found_returns_404(self, owner_client):
+        """404: intent not found."""
+        with patch(CRUD_PATH) as mock:
+            mock.get_by_id = AsyncMock(return_value=None)
+            resp = owner_client.post(f"/payments/bank-transfer/{INTENT_ID}/cancel")
+        assert resp.status_code == 404
+
+    def test_non_owner_non_admin_cannot_cancel(self):
+        """403: non-owner, non-admin user cannot cancel a bank transfer."""
+        random_user = make_customer(user_id=uuid4())
+        mock_bc = MagicMock()
+        mock_bc.get_booking = AsyncMock(
+            return_value=booking_dict(
+                user_id=str(CUSTOMER_ID),
+                property_owner_id=str(PROPERTY_OWNER_ID),
+                status="pending",
+                payment_method="bank_transfer",
+            )
+        )
+        app = _build_bt_app(random_user, bookings_client=mock_bc)
+        client = TestClient(app, raise_server_exceptions=True)
+
+        with patch(CRUD_PATH) as mock:
+            mock.get_by_id = AsyncMock(
+                return_value=MagicMock(
+                    id=INTENT_ID,
+                    property_owner_id=PROPERTY_OWNER_ID,
+                    status=BankTransferStatus.PENDING,
+                    booking_id=BOOKING_ID,
+                )
+            )
+            resp = client.post(f"/payments/bank-transfer/{INTENT_ID}/cancel")
+        assert resp.status_code == 403
+
+    def test_cancel_when_already_confirmed_returns_409(self, owner_client):
+        """409: intent already confirmed cannot be cancelled."""
+        with patch(CRUD_PATH) as mock:
+            mock.get_by_id = AsyncMock(
+                return_value=MagicMock(
+                    id=INTENT_ID,
+                    property_owner_id=PROPERTY_OWNER_ID,
+                    status=BankTransferStatus.CONFIRMED,
+                    booking_id=BOOKING_ID,
+                )
+            )
+            resp = owner_client.post(f"/payments/bank-transfer/{INTENT_ID}/cancel")
+        assert resp.status_code == 409
+
+    def test_cancel_when_already_cancelled_returns_409(self, owner_client):
+        """409: intent already cancelled cannot be cancelled again."""
+        with patch(CRUD_PATH) as mock:
+            mock.get_by_id = AsyncMock(
+                return_value=MagicMock(
+                    id=INTENT_ID,
+                    property_owner_id=PROPERTY_OWNER_ID,
+                    status=BankTransferStatus.CANCELLED,
+                    booking_id=BOOKING_ID,
+                )
+            )
+            resp = owner_client.post(f"/payments/bank-transfer/{INTENT_ID}/cancel")
+        assert resp.status_code == 409
+
+
+# ===========================================================================
+# GET /payments/bank-transfer/{intent_id}
+# ===========================================================================
+
+
+class TestGetBankTransfer:
+    def test_owner_can_get_intent(self, owner_client):
+        """Owner can retrieve their bank transfer intent by ID."""
+        with patch(CRUD_PATH) as mock:
+            mock.get_by_id = AsyncMock(
+                return_value=MagicMock(
+                    id=INTENT_ID,
+                    property_owner_id=PROPERTY_OWNER_ID,
+                    status=BankTransferStatus.PENDING,
+                    booking_id=BOOKING_ID,
+                    user_id=CUSTOMER_ID,
+                    amount="40.00",
+                    currency="EUR",
+                    bank_iban=OWNER_BANK["bank_iban"],
+                    bank_bic=OWNER_BANK["bank_bic"],
+                    bank_name=OWNER_BANK["bank_name"],
+                    account_holder=OWNER_BANK["account_holder"],
+                    reference=f"BK-{str(BOOKING_ID)[:8].upper()}",
+                    updated_at=NOW.isoformat(),
+                )
+            )
+            resp = owner_client.get(f"/payments/bank-transfer/{INTENT_ID}")
+        assert resp.status_code == 200
+        assert resp.json()["id"] == str(INTENT_ID)
+        assert resp.json()["status"] == "pending"
+
+    def test_intent_not_found_returns_404(self, owner_client):
+        """404: intent not found."""
+        with patch(CRUD_PATH) as mock:
+            mock.get_by_id = AsyncMock(return_value=None)
+            resp = owner_client.get(f"/payments/bank-transfer/{INTENT_ID}")
+        assert resp.status_code == 404
+
+    def test_non_owner_non_admin_cannot_get(self):
+        """403: non-owner, non-admin user cannot retrieve a bank transfer."""
+        random_user = make_customer(user_id=uuid4())
+        mock_bc = MagicMock()
+        mock_bc.get_booking = AsyncMock(
+            return_value=booking_dict(
+                user_id=str(CUSTOMER_ID),
+                property_owner_id=str(PROPERTY_OWNER_ID),
+                status="pending",
+                payment_method="bank_transfer",
+            )
+        )
+        app = _build_bt_app(random_user, bookings_client=mock_bc)
+        client = TestClient(app, raise_server_exceptions=True)
+
+        with patch(CRUD_PATH) as mock:
+            mock.get_by_id = AsyncMock(
+                return_value=MagicMock(
+                    id=INTENT_ID,
+                    property_owner_id=PROPERTY_OWNER_ID,
+                    status=BankTransferStatus.PENDING,
+                    booking_id=BOOKING_ID,
+                )
+            )
+            resp = client.get(f"/payments/bank-transfer/{INTENT_ID}")
+        assert resp.status_code == 403
+
+
+# ===========================================================================
+# GET /payments/bank-transfer/
+# ===========================================================================
+
+
+class TestListBankTransfers:
+    def test_owner_can_list_intents(self, owner_client):
+        """Owner can list their bank transfer intents."""
+        with patch(CRUD_PATH) as mock:
+            mock.list_by_status = AsyncMock(
+                return_value=[
+                    MagicMock(
+                        id=INTENT_ID,
+                        property_owner_id=PROPERTY_OWNER_ID,
+                        status=BankTransferStatus.PENDING,
+                        booking_id=BOOKING_ID,
+                        user_id=CUSTOMER_ID,
+                        amount="40.00",
+                        currency="EUR",
+                        bank_iban=OWNER_BANK["bank_iban"],
+                        bank_bic=OWNER_BANK["bank_bic"],
+                        bank_name=OWNER_BANK["bank_name"],
+                        account_holder=OWNER_BANK["account_holder"],
+                        reference=f"BK-{str(BOOKING_ID)[:8].upper()}",
+                        updated_at=NOW.isoformat(),
+                    )
+                ]
+            )
+            resp = owner_client.get("/payments/bank-transfer/")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) == 1
+        assert data[0]["id"] == str(INTENT_ID)
+
+    def test_list_empty_returns_empty_array(self, owner_client):
+        """Empty list returns empty array."""
+        with patch(CRUD_PATH) as mock:
+            mock.list_by_status = AsyncMock(return_value=[])
+            resp = owner_client.get("/payments/bank-transfer/")
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+    def test_customer_can_list_own_intents(self, customer_client):
+        """Customer can list their own bank transfer intents."""
+        with patch(CRUD_PATH) as mock:
+            mock.list_by_status = AsyncMock(
+                return_value=[
+                    MagicMock(
+                        id=INTENT_ID,
+                        property_owner_id=PROPERTY_OWNER_ID,
+                        status=BankTransferStatus.PENDING,
+                        booking_id=BOOKING_ID,
+                        user_id=CUSTOMER_ID,
+                        amount="40.00",
+                        currency="EUR",
+                        bank_iban=OWNER_BANK["bank_iban"],
+                        bank_bic=OWNER_BANK["bank_bic"],
+                        bank_name=OWNER_BANK["bank_name"],
+                        account_holder=OWNER_BANK["account_holder"],
+                        reference=f"BK-{str(BOOKING_ID)[:8].upper()}",
+                        updated_at=NOW.isoformat(),
+                    )
+                ]
+            )
+            resp = customer_client.get("/payments/bank-transfer/")
+        assert resp.status_code == 200
+        assert len(resp.json()) == 1
