@@ -274,7 +274,19 @@ class OwnerBankAccountCRUD:
         bic: str | None = None,
         bank_name: str | None = None,
     ) -> OwnerBankAccountResponse:
-        account, _ = await OwnerBankAccount.get_or_create(dict(iban=iban), owner_id=owner_id)
+        # All non-null columns must be in the create defaults, otherwise
+        # get_or_create instantiates the row with account_holder=None and
+        # fails validation before the assignments below can run.
+        account, _ = await OwnerBankAccount.get_or_create(
+            defaults=dict(
+                iban=iban,
+                account_holder=account_holder,
+                bic=bic,
+                bank_name=bank_name,
+            ),
+            owner_id=owner_id,
+        )
+        account.iban = iban
         account.account_holder = account_holder
         account.bic = bic
         account.bank_name = bank_name
