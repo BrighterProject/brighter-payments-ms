@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from functools import lru_cache
+from typing import TYPE_CHECKING
 from urllib.parse import quote, unquote
 from uuid import UUID
 
@@ -10,6 +11,9 @@ from loguru import logger
 from stripe import StripeClient
 
 from app import settings
+
+if TYPE_CHECKING:
+    from stripe._base_address import BaseAddresses
 from app.scopes import PAYMENT_SCOPE_DESCRIPTIONS, PaymentScope
 
 oauth2_scheme = OAuth2PasswordBearer(
@@ -31,7 +35,12 @@ def _get_system_admin() -> "CurrentUser":
         _SYSTEM_ADMIN = CurrentUser(
             id=UUID("00000000-0000-0000-0000-000000000001"),
             username="payments-ms",
-            scopes=["admin:bookings:read", "admin:bookings:write", "admin:scopes", "admin:notifications:write"],
+            scopes=[
+                "admin:bookings:read",
+                "admin:bookings:write",
+                "admin:scopes",
+                "admin:notifications:write",
+            ],
         )
     return _SYSTEM_ADMIN
 
@@ -117,8 +126,22 @@ def get_stripe_client() -> StripeClient:
     """
     Returns a cached Stripe client initialised with the secret key from settings.
     Override via app.dependency_overrides[get_stripe_client] in tests.
+
+    When STRIPE_API_BASE is set (e.g. in e2e tests pointing at stripe-mock),
+    all API, Connect, and file upload calls are redirected to that base.
     """
-    return StripeClient(settings.stripe_secret_key, stripe_version="2025-04-30.basil")
+    base_addresses: BaseAddresses = {}  # type: ignore[assignment]
+    if settings.stripe_api_base:
+        base_addresses = {  # type: ignore[assignment]
+            "api": settings.stripe_api_base,
+            "connect": settings.stripe_api_base,
+            "files": settings.stripe_api_base,
+        }
+    return StripeClient(
+        settings.stripe_secret_key,
+        stripe_version="2025-04-30.basil",
+        base_addresses=base_addresses,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -154,9 +177,7 @@ class BookingsClient:
 
     async def get_booking(self, booking_id: UUID, user: CurrentUser) -> dict | None:
         """Return booking dict or None on 404. Raises HTTPException on 5xx."""
-        resp = await self._client.get(
-            f"/bookings/{booking_id}", headers=self._headers(user)
-        )
+        resp = await self._client.get(f"/bookings/{booking_id}", headers=self._headers(user))
         if resp.status_code == 404:
             return None
         if resp.status_code >= 400:
@@ -235,10 +256,20 @@ class NotificationsClient:
         }
 
     async def send(
-        self, *, to: str, notification_type: str, data: dict | None = None, locale: str | None = None
+        self,
+        *,
+        to: str,
+        notification_type: str,
+        data: dict | None = None,
+        locale: str | None = None,
     ) -> None:
         try:
-            logger.debug("Sending notification from payments-ms | type={} to={} data={}", notification_type, to, data)
+            logger.debug(
+                "Sending notification from payments-ms | type={} to={} data={}",
+                notification_type,
+                to,
+                data,
+            )
             await self._client.post(
                 "/notifications/dispatch",
                 json={
@@ -250,9 +281,18 @@ class NotificationsClient:
                 },
                 headers=self._headers(),
             )
-            logger.debug("Successfully sent notification from payments-ms | type={} to={}", notification_type, to)
+            logger.debug(
+                "Successfully sent notification from payments-ms | type={} to={}",
+                notification_type,
+                to,
+            )
         except Exception as exc:
-            logger.error("Failed to send notification from payments-ms | type={} to={} error={}", notification_type, to, exc)
+            logger.error(
+                "Failed to send notification from payments-ms | type={} to={} error={}",
+                notification_type,
+                to,
+                exc,
+            )
 
 
 _notifications_client = NotificationsClient()
@@ -346,9 +386,7 @@ class UsersClient:
     async def get_user(self, user_id: UUID) -> dict | None:
         """Return user dict or None on 404."""
         try:
-            resp = await self._client.get(
-                f"/users/{user_id}", headers=self._headers()
-            )
+            resp = await self._client.get(f"/users/{user_id}", headers=self._headers())
             if resp.status_code == 404:
                 return None
             if resp.status_code >= 400:
@@ -359,31 +397,24 @@ class UsersClient:
             logger.warning("UsersClient: failed to fetch user {} — {}", user_id, exc)
             return None
 
-    async def grant_role(self, user_id: UUID, role: str = "owner") -> None:
-        """Grant a named role to a user via users-ms. Logs at ERROR on failure; never raises."""
+    async def _post_admin(self, path: str, label: str) -> None:
+        """POST to a users-ms admin endpoint. Logs at ERROR on failure; never raises."""
         try:
-            resp = await self._client.post(
-                f"/users/{user_id}/grant-role",
-                json={"role": role},
-                headers=self._headers(),
-            )
+            resp = await self._client.post(path, headers=self._headers())
             if resp.status_code not in (200, 204):
-                logger.error(
-                    "UsersClient.grant_role: failed for user_id={} role={} — HTTP {} {}",
-                    user_id,
-                    role,
-                    resp.status_code,
-                    resp.text,
-                )
-                # TODO: trigger high-priority alert (e.g. Sentry capture_exception with level="fatal")
-                # so ops can manually grant the role. Include owner_id in the alert payload.
+                logger.error("UsersClient.{}: HTTP {} {}", label, resp.status_code, resp.text)
         except Exception as exc:
-            logger.error(
-                "UsersClient.grant_role: exception for user_id={} role={} — {}",
-                user_id,
-                role,
-                exc,
-            )
+            logger.error("UsersClient.{}: exception — {}", label, exc)
+
+    async def grant_role(self, user_id: UUID, role: str = "owner") -> None:
+        """Grant owner role to a user via users-ms. Logs at ERROR on failure; never raises."""
+        # TODO: trigger high-priority alert (e.g. Sentry capture_exception with level="fatal")
+        # so ops can manually grant the role. Include owner_id in the alert payload.
+        await self._post_admin(f"/users/{user_id}/grant-owner", f"grant_role({role})")
+
+    async def revoke_owner(self, user_id: UUID) -> None:
+        """Strip owner scopes from a user via users-ms. Logs at ERROR on failure; never raises."""
+        await self._post_admin(f"/users/{user_id}/revoke-owner", "revoke_owner")
 
 
 _users_client = UsersClient()

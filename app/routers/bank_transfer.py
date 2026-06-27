@@ -28,8 +28,7 @@ async def list_bank_transfers(
 ) -> list[BankTransferResponse]:
     """List bank transfer intents. Admins see all; owners see only their own."""
     is_admin = (
-        PaymentScope.ADMIN in current_user.scopes
-        or PaymentScope.ADMIN_READ in current_user.scopes
+        PaymentScope.ADMIN in current_user.scopes or PaymentScope.ADMIN_READ in current_user.scopes
     )
     results = await bank_transfer_crud.list_by_status(
         status=transfer_status,
@@ -96,13 +95,17 @@ async def get_bank_transfer(
     """Return a single bank transfer intent (guest, owner, or admin)."""
     intent = await bank_transfer_crud.get_by_id(intent_id)
     if intent is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Bank transfer not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Bank transfer not found."
+        )
 
     is_admin = (
-        PaymentScope.ADMIN in current_user.scopes
-        or PaymentScope.ADMIN_READ in current_user.scopes
+        PaymentScope.ADMIN in current_user.scopes or PaymentScope.ADMIN_READ in current_user.scopes
     )
-    if not is_admin and current_user.id not in (intent.user_id, intent.property_owner_id):
+    if not is_admin and current_user.id not in (
+        intent.user_id,
+        intent.property_owner_id,
+    ):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden.")
 
     return BankTransferResponse.model_validate(intent)
@@ -120,7 +123,9 @@ async def confirm_bank_transfer(
     """
     intent = await bank_transfer_crud.get_by_id(intent_id)
     if intent is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Bank transfer not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Bank transfer not found."
+        )
 
     if intent.status != BankTransferStatus.PENDING:
         raise HTTPException(
@@ -158,7 +163,9 @@ async def cancel_bank_transfer(
     """
     intent = await bank_transfer_crud.get_by_id(intent_id)
     if intent is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Bank transfer not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Bank transfer not found."
+        )
 
     if intent.status != BankTransferStatus.PENDING:
         raise HTTPException(

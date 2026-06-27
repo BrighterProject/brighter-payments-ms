@@ -20,7 +20,7 @@ class SubscriptionStatus(StrEnum):
     TRIALING = "trialing"
     ACTIVE = "active"
     PAST_DUE = "past_due"
-    CANCELLED = "cancelled"
+    CANCELED = "canceled"
     INCOMPLETE = "incomplete"
 
 
@@ -40,6 +40,7 @@ class OwnerSubscriptionResponse(BaseModel):
     plan: SubscriptionPlanResponse
     status: SubscriptionStatus
     current_period_end: datetime | None
+    cancel_at_period_end: bool = False
     cancelled_at: datetime | None
     model_config = ConfigDict(from_attributes=True)
 
@@ -57,6 +58,7 @@ class PaymentStatus(StrEnum):
     PENDING = "pending"
     PAID = "paid"
     REFUNDED = "refunded"
+    PARTIALLY_REFUNDED = "partially_refunded"
     FAILED = "failed"
 
 
@@ -68,11 +70,22 @@ class PaymentResponse(BaseModel):
     stripe_session_id: str
     stripe_payment_intent_id: str | None
     amount: Decimal
+    refunded_amount: Decimal | None = None
     currency: str
     status: PaymentStatus
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class RefundRequest(BaseModel):
+    """Refund instruction from bookings-ms.
+
+    ``amount`` is in major currency units (e.g. EUR). ``None`` (or a value
+    greater than or equal to the captured amount) means a full refund.
+    """
+
+    amount: Decimal | None = None
 
 
 class CheckoutRequest(BaseModel):

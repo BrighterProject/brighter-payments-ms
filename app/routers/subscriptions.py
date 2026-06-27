@@ -1,7 +1,6 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from loguru import logger
 from stripe import StripeClient
 
 from app import settings
@@ -16,7 +15,7 @@ from app.schemas import (
 from app.scopes import PaymentScope
 from app.utils import append_query_params
 
-router = APIRouter(prefix="/subscriptions", tags=["subscriptions"])
+router = APIRouter(prefix="/payments/subscriptions", tags=["subscriptions"])
 
 
 @router.get("/", response_model=list[OwnerSubscriptionResponse])
@@ -69,16 +68,21 @@ async def subscribe(
     )
     cancel_url = settings.stripe_subscription_cancel_url.replace("{locale}", locale)
 
-    session = stripe_client.v1.checkout.sessions.create(params={
-        "mode": "subscription",
-        "line_items": [{"price": plan.stripe_price_id, "quantity": 1}],
-        "customer_email": current_user.username,
-        "metadata": {"owner_id": str(current_user.id), "plan_slug": plan_slug},
-        "client_reference_id": str(current_user.id),
-        "success_url": success_url,
-        "cancel_url": cancel_url,
-    })
-    return SubscriptionCheckoutResponse(checkout_url=session.url, session_id=session.id)
+    session = stripe_client.v1.checkout.sessions.create(
+        params={
+            "mode": "subscription",
+            "line_items": [{"price": plan.stripe_price_id, "quantity": 1}],
+            "customer_email": current_user.username,
+            "metadata": {"owner_id": str(current_user.id), "plan_slug": plan_slug},
+            "subscription_data": {
+                "metadata": {"owner_id": str(current_user.id), "plan_slug": plan_slug}
+            },
+            "client_reference_id": str(current_user.id),
+            "success_url": success_url,
+            "cancel_url": cancel_url,
+        }
+    )
+    return SubscriptionCheckoutResponse(checkout_url=session.url, session_id=session.id)  # type: ignore
 
 
 @router.post("/portal", response_model=PortalResponse)
@@ -89,22 +93,28 @@ async def customer_portal(
 ) -> PortalResponse:
     sub = await subscription_crud.get_owner_subscription(current_user.id)
     if sub is None or sub.stripe_customer_id is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No Stripe customer on record.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No Stripe customer on record.",
+        )
     return_url = settings.stripe_portal_return_url.replace("{locale}", locale)
-    session = stripe_client.v1.billing_portal.sessions.create(params={
-        "customer": sub.stripe_customer_id,
-        "return_url": return_url,
-    })
+    session = stripe_client.v1.billing_portal.sessions.create(
+        params={
+            "customer": sub.stripe_customer_id,
+            "return_url": return_url,
+        }
+    )
     return PortalResponse(portal_url=session.url)
 
 
 @router.get("/can-add-listing")
 async def can_add_listing(
     owner_id: UUID,
+    current_count: int = 0,
     current_user: CurrentUser = Depends(get_current_user),
 ) -> dict:
     """Internal endpoint called by properties-ms to enforce listing quota."""
     if current_user.id != owner_id and not current_user.is_admin:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden.")
-    allowed = await subscription_crud.can_add_listing(owner_id)
+    allowed = await subscription_crud.can_add_listing(owner_id, current_count)
     return {"allowed": allowed}

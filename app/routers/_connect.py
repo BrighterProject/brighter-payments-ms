@@ -86,9 +86,7 @@ async def connect_status(
 async def onboard_connect(
     current_user: CurrentUser = Depends(require_owner),
     stripe_client: StripeClient = Depends(get_stripe_client),
-    entity_type: Literal[
-        "company", "government_entity", "individual", "non_profit"
-    ] = "individual",
+    entity_type: Literal["company", "government_entity", "individual", "non_profit"] = "individual",
     country: CountryAlpha2 = CountryAlpha2("BG"),
     upfront: bool = False,  # whether to collect eventually_due
 ) -> OnboardResponse:
@@ -100,7 +98,7 @@ async def onboard_connect(
     """
     account = await connect_crud.get_by_owner(current_user.id)
     if account is None:
-        stripe_account = stripe_client.v2.core.accounts.create(
+        stripe_account = stripe_client.v2.core.accounts.create(  # type: ignore
             {
                 "identity": {
                     "country": country,
@@ -135,7 +133,7 @@ async def onboard_connect(
 
     fields = "eventually_due" if upfront else "currently_due"
 
-    account_link = stripe_client.v2.core.account_links.create(
+    account_link = stripe_client.v2.core.account_links.create(  # type: ignore
         {
             "account": stripe_account_id,
             "use_case": {
@@ -160,11 +158,9 @@ async def refresh_stripe_onboarding(
     account = await connect_crud.get_by_owner(current_user.id)
 
     if not account:
-        return RedirectResponse(
-            url=settings.stripe_connect_settings_url, status_code=303
-        )
+        return RedirectResponse(url=settings.stripe_connect_settings_url, status_code=303)
 
-    account_link = stripe_client.v2.core.account_links.create(
+    account_link = stripe_client.v2.core.account_links.create(  # type: ignore
         {
             "account": account.stripe_account_id,
             "use_case": {
@@ -191,7 +187,7 @@ async def update_stripe_account(
     if not account:
         return UpdateResponse(redirect_url=settings.stripe_connect_settings_url)
 
-    account_link = stripe_client.v2.core.account_links.create(
+    account_link = stripe_client.v2.core.account_links.create(  # type: ignore
         {
             "account": account.stripe_account_id,
             "use_case": {
@@ -227,7 +223,7 @@ async def disconnect_connect(
         )
 
     with contextlib.suppress(Exception):
-        stripe_client.v2.core.accounts.close(account.stripe_account_id)
+        stripe_client.v2.core.accounts.close(account.stripe_account_id)  # type: ignore
 
     await connect_crud.delete_by_owner(current_user.id)
 
@@ -255,7 +251,7 @@ async def connect_webhook(
     sig_header = request.headers.get("Stripe-Signature", "")
 
     try:
-        thin_event = stripe_client.parse_event_notification(
+        thin_event = stripe_client.parse_event_notification(  # type: ignore
             raw_body, sig_header, settings.stripe_connect_webhook_secret
         )
     except stripe.SignatureVerificationError as exc:
@@ -278,7 +274,7 @@ async def connect_webhook(
         # Fetch the latest account state so we always sync from Stripe's source
         # of truth. v2 retrieval supports include for requirement and
         # configuration fields.
-        account = stripe_client.v2.core.accounts.retrieve(
+        account = stripe_client.v2.core.accounts.retrieve(  # type: ignore
             account_id,
             params={"include": ["requirements", "configuration.recipient"]},
         )

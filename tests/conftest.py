@@ -18,6 +18,7 @@ from app.deps import (
     get_notifications_client,
     get_properties_client,
     get_stripe_client,
+    get_users_client,
 )
 from app.routers.payments import router
 
@@ -48,6 +49,14 @@ def _noop_properties_client():
     return mock
 
 
+def _noop_users_client():
+    mock = MagicMock()
+    mock.get_user = AsyncMock(return_value=None)
+    mock.grant_role = AsyncMock(return_value=None)
+    mock.revoke_owner = AsyncMock(return_value=None)
+    return mock
+
+
 def _noop_stripe_client():
     """Stripe client mock with no-op checkout and refund methods."""
     mock = MagicMock()
@@ -73,6 +82,7 @@ def build_app(
     stripe_client=None,
     notifications_client=None,
     properties_client=None,
+    users_client=None,
 ) -> FastAPI:
     """
     Fresh FastAPI app with auth/scope dependencies overridden to return
@@ -93,10 +103,12 @@ def build_app(
     sc = stripe_client if stripe_client is not None else _noop_stripe_client()
     nc = notifications_client if notifications_client is not None else _noop_notifications_client()
     pc = properties_client if properties_client is not None else _noop_properties_client()
+    uc = users_client if users_client is not None else _noop_users_client()
     app.dependency_overrides[get_bookings_client] = lambda: bc
     app.dependency_overrides[get_stripe_client] = lambda: sc
     app.dependency_overrides[get_notifications_client] = lambda: nc
     app.dependency_overrides[get_properties_client] = lambda: pc
+    app.dependency_overrides[get_users_client] = lambda: uc
 
     return app
 
@@ -137,6 +149,7 @@ def client_factory():
         stripe_client=None,
         notifications_client=None,
         properties_client=None,
+        users_client=None,
     ) -> TestClient:
         return TestClient(
             build_app(
@@ -145,6 +158,7 @@ def client_factory():
                 stripe_client=stripe_client,
                 notifications_client=notifications_client,
                 properties_client=properties_client,
+                users_client=users_client,
             ),
             raise_server_exceptions=True,
         )

@@ -8,6 +8,7 @@ class PaymentStatus(StrEnum):
     PENDING = "pending"  # Checkout Session created, awaiting customer payment
     PAID = "paid"  # checkout.session.completed received
     REFUNDED = "refunded"  # Full refund issued to customer
+    PARTIALLY_REFUNDED = "partially_refunded"  # Partial refund issued to customer
     FAILED = "failed"  # Checkout Session expired without payment
 
 
@@ -25,13 +26,15 @@ class Payment(Model):
 
     # Monetary snapshot — always fetched from bookings-ms, never from the client
     amount = fields.DecimalField(max_digits=10, decimal_places=2)
+    # Amount refunded to the customer; null until a refund is issued.
+    refunded_amount = fields.DecimalField(max_digits=10, decimal_places=2, null=True)
     currency = fields.CharField(max_length=3, default="EUR")
 
     status = fields.CharEnumField(PaymentStatus, default=PaymentStatus.PENDING)
     locale = fields.CharField(max_length=10, default="en")
     updated_at = fields.DatetimeField(auto_now=True)
 
-    class Meta:  # type: ignore
+    class Meta:
         table = "payments"
         ordering = ["-created_at"]
 
@@ -47,7 +50,7 @@ class OwnerStripeAccount(Model):
     requirements_outstanding = fields.BooleanField(default=False)
     requirements_eventually_due = fields.BooleanField(default=False)
 
-    class Meta:  # type: ignore
+    class Meta:
         table = "owner_stripe_accounts"
 
 
@@ -63,7 +66,7 @@ class SubscriptionStatus(StrEnum):
     TRIALING = "trialing"
     ACTIVE = "active"
     PAST_DUE = "past_due"
-    CANCELLED = "cancelled"
+    CANCELED = "canceled"
     INCOMPLETE = "incomplete"
 
 
@@ -76,7 +79,7 @@ class SubscriptionPlan(Model):
     stripe_price_id = fields.CharField(max_length=255, null=True)
     is_active = fields.BooleanField(default=True)
 
-    class Meta:  # type: ignore
+    class Meta:
         table = "subscription_plans"
 
 
@@ -84,15 +87,18 @@ class OwnerSubscription(Model):
     id = fields.UUIDField(primary_key=True)
     owner_id = fields.UUIDField(unique=True)
     plan = fields.ForeignKeyField(
-        "models.SubscriptionPlan", related_name="subscriptions", on_delete=fields.RESTRICT
+        "models.SubscriptionPlan",
+        related_name="subscriptions",
+        on_delete=fields.RESTRICT,
     )
     status = fields.CharEnumField(SubscriptionStatus, default=SubscriptionStatus.INCOMPLETE)
     stripe_customer_id = fields.CharField(max_length=255, null=True)
     stripe_subscription_id = fields.CharField(max_length=255, null=True, unique=True)
     current_period_end = fields.DatetimeField(null=True)
+    cancel_at_period_end = fields.BooleanField(default=False)
     cancelled_at = fields.DatetimeField(null=True)
 
-    class Meta:  # type: ignore
+    class Meta:
         table = "owner_subscriptions"
 
 
@@ -107,7 +113,7 @@ class OwnerBankAccount(Model):
     account_holder = fields.CharField(max_length=200)
     updated_at = fields.DatetimeField(auto_now=True)
 
-    class Meta:  # type: ignore
+    class Meta:
         table = "owner_bank_accounts"
 
 
@@ -132,5 +138,5 @@ class BankTransferPayment(Model):
     reference = fields.CharField(max_length=50)
     updated_at = fields.DatetimeField(auto_now=True)
 
-    class Meta:  # type: ignore
+    class Meta:
         table = "bank_transfer_payments"

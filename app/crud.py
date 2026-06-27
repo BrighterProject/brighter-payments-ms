@@ -16,11 +16,11 @@ from app.models import (
     SubscriptionPlan,
     SubscriptionStatus,
 )
-from app.schemas import BankTransferResponse, OwnerBankAccountResponse, PaymentResponse
+from app.schemas import OwnerBankAccountResponse, PaymentResponse
 
 
 class PaymentCRUD(CRUD[Payment, PaymentResponse]):  # type: ignore
-    async def create(
+    async def create(  # type: ignore
         self,
         *,
         booking_id: UUID,
@@ -59,17 +59,13 @@ class PaymentCRUD(CRUD[Payment, PaymentResponse]):  # type: ignore
         """Return the raw model instance for internal webhook processing."""
         return await Payment.get_or_none(stripe_session_id=session_id)
 
-    async def mark_paid(
-        self, session_id: str, payment_intent_id: str
-    ) -> Payment | None:
+    async def mark_paid(self, session_id: str, payment_intent_id: str) -> Payment | None:
         inst = await Payment.get_or_none(stripe_session_id=session_id)
         if inst is None:
             return None
         inst.status = PaymentStatus.PAID
         inst.stripe_payment_intent_id = payment_intent_id
-        await inst.save(
-            update_fields=["status", "stripe_payment_intent_id", "updated_at"]
-        )
+        await inst.save(update_fields=["status", "stripe_payment_intent_id", "updated_at"])
         return inst
 
     async def mark_failed(self, session_id: str) -> Payment | None:
@@ -80,15 +76,27 @@ class PaymentCRUD(CRUD[Payment, PaymentResponse]):  # type: ignore
         await inst.save(update_fields=["status", "updated_at"])
         return inst
 
-    async def mark_refunded(self, payment_intent_id: str) -> Payment | None:
+    async def mark_refunded(
+        self,
+        payment_intent_id: str,
+        refunded_amount: Decimal | None = None,
+        is_full: bool = True,
+    ) -> Payment | None:
+        """Record a refund against a paid payment.
+
+        Idempotent across the endpoint and the ``charge.refunded`` webhook: a
+        payment already in ``PARTIALLY_REFUNDED`` can still be escalated to a
+        larger or full refund.
+        """
         inst = await Payment.get_or_none(
             stripe_payment_intent_id=payment_intent_id,
-            status=PaymentStatus.PAID,
+            status__in=[PaymentStatus.PAID, PaymentStatus.PARTIALLY_REFUNDED],
         )
         if inst is None:
             return None
-        inst.status = PaymentStatus.REFUNDED
-        await inst.save(update_fields=["status", "updated_at"])
+        inst.status = PaymentStatus.REFUNDED if is_full else PaymentStatus.PARTIALLY_REFUNDED
+        inst.refunded_amount = refunded_amount if refunded_amount is not None else inst.amount
+        await inst.save(update_fields=["status", "refunded_amount", "updated_at"])
         return inst
 
     async def list_payments(
@@ -139,23 +147,29 @@ class SubscriptionCRUD:
         stripe_customer_id: str | None = None,
         stripe_subscription_id: str | None = None,
         current_period_end: datetime | None = None,
+        cancel_at_period_end: bool = False,
     ) -> OwnerSubscription:
-        sub, _ = await OwnerSubscription.get_or_create(owner_id=owner_id)
-        sub.plan_id = plan_id
-        sub.status = status
-        if stripe_customer_id:
-            sub.stripe_customer_id = stripe_customer_id
-        if stripe_subscription_id:
-            sub.stripe_subscription_id = stripe_subscription_id
-        if current_period_end:
-            sub.current_period_end = current_period_end
-        await sub.save()
-        return await OwnerSubscription.get(id=sub.id).select_related("plan")
+        defaults: dict = {
+            "plan_id": plan_id,
+            "status": status,
+            "cancel_at_period_end": cancel_at_period_end,
+        }
+        if stripe_customer_id is not None:
+            defaults["stripe_customer_id"] = stripe_customer_id
+        if stripe_subscription_id is not None:
+            defaults["stripe_subscription_id"] = stripe_subscription_id
+        if current_period_end is not None:
+            defaults["current_period_end"] = current_period_end
+        if status == SubscriptionStatus.CANCELED:
+            defaults["cancelled_at"] = datetime.utcnow()
+        sub, _ = await OwnerSubscription.update_or_create(defaults, owner_id=owner_id)
+        await sub.fetch_related("plan")
+        return sub
 
     async def cancel_subscription(self, owner_id: UUID) -> OwnerSubscription | None:
         sub = await self.get_owner_subscription(owner_id)
         if sub:
-            sub.status = SubscriptionStatus.CANCELLED
+            sub.status = SubscriptionStatus.CANCELED
             sub.cancelled_at = datetime.utcnow()
             await sub.save()
         return sub
@@ -164,20 +178,17 @@ class SubscriptionCRUD:
         """Return all owner subscriptions with plan data (admin use)."""
         return await OwnerSubscription.all().select_related("plan").order_by("-created_at")
 
-    async def can_add_listing(self, owner_id: UUID) -> bool:
+    async def can_add_listing(self, owner_id: UUID, current_count: int) -> bool:
         """Return True if owner has an active subscription with quota remaining."""
         sub = await self.get_owner_subscription(owner_id)
-        if sub is None or sub.status not in (SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING):
+        if sub is None or sub.status not in (
+            SubscriptionStatus.ACTIVE,
+            SubscriptionStatus.TRIALING,
+        ):
             return False
         if sub.plan.max_listings == -1:
             return True
-        active_count = await _count_owner_listings(owner_id)
-        return active_count < sub.plan.max_listings
-
-
-async def _count_owner_listings(owner_id: UUID) -> int:
-    """Cross-service stub — replaced by PaymentsClient call in properties-ms Task 4."""
-    return 0
+        return current_count < sub.plan.max_listings
 
 
 subscription_crud = SubscriptionCRUD()
@@ -263,7 +274,19 @@ class OwnerBankAccountCRUD:
         bic: str | None = None,
         bank_name: str | None = None,
     ) -> OwnerBankAccountResponse:
-        account, _ = await OwnerBankAccount.get_or_create(dict(iban=iban), owner_id=owner_id)
+        # All non-null columns must be in the create defaults, otherwise
+        # get_or_create instantiates the row with account_holder=None and
+        # fails validation before the assignments below can run.
+        account, _ = await OwnerBankAccount.get_or_create(
+            defaults=dict(
+                iban=iban,
+                account_holder=account_holder,
+                bic=bic,
+                bank_name=bank_name,
+            ),
+            owner_id=owner_id,
+        )
+        account.iban = iban
         account.account_holder = account_holder
         account.bic = bic
         account.bank_name = bank_name

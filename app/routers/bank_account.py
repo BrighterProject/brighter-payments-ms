@@ -31,7 +31,9 @@ async def get_my_bank_account(
     """Return the calling owner's bank account details."""
     account = await owner_bank_account_crud.get_by_owner(current_user.id)
     if account is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No bank account configured.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="No bank account configured."
+        )
     return account
 
 
@@ -45,5 +47,7 @@ async def get_owner_bank_account(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required.")
     account = await owner_bank_account_crud.get_by_owner(owner_id)
     if account is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No bank account configured.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="No bank account configured."
+        )
     return account
