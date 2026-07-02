@@ -1,3 +1,4 @@
+import re
 from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import TYPE_CHECKING
@@ -441,3 +442,30 @@ _users_client = UsersClient()
 
 def get_users_client() -> UsersClient:
     return _users_client
+
+
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+async def resolve_customer_email(user: CurrentUser, users_client: UsersClient) -> str | None:
+    """Resolve a valid email for Stripe checkout prefill, or ``None``.
+
+    Some legacy usernames are themselves email addresses; if so, use it
+    directly. Otherwise fetch the user's real ``email`` from users-ms. Returns
+    ``None`` when no syntactically valid email is available, so callers can omit
+    ``customer_email`` and let Stripe collect it on its hosted page.
+
+    Args:
+        user: The authenticated user (from Traefik headers).
+        users_client: Client for fetching the user's profile from users-ms.
+
+    Returns:
+        A syntactically valid email address, or ``None`` if none is available.
+    """
+    if _EMAIL_RE.match(user.username):
+        return user.username
+    record = await users_client.get_user(user.id)
+    email = record.get("email") if record else None
+    if email and _EMAIL_RE.match(email):
+        return email
+    return None
