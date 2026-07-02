@@ -121,11 +121,9 @@ def require_owner(
 # ---------------------------------------------------------------------------
 
 
-@lru_cache(maxsize=1)
-def get_stripe_client() -> StripeClient:
+def _build_stripe_client(stripe_version: str) -> StripeClient:
     """
-    Returns a cached Stripe client initialised with the secret key from settings.
-    Override via app.dependency_overrides[get_stripe_client] in tests.
+    Build a Stripe client on a specific API version.
 
     When STRIPE_API_BASE is set (e.g. in e2e tests pointing at stripe-mock),
     all API, Connect, and file upload calls are redirected to that base.
@@ -139,9 +137,30 @@ def get_stripe_client() -> StripeClient:
         }
     return StripeClient(
         settings.stripe_secret_key,
-        stripe_version="2025-04-30.basil",
+        stripe_version=stripe_version,
         base_addresses=base_addresses,
     )
+
+
+@lru_cache(maxsize=1)
+def get_stripe_client() -> StripeClient:
+    """
+    Cached Stripe client for the v1 checkout/refund flow (pinned to basil).
+    Override via app.dependency_overrides[get_stripe_client] in tests.
+    """
+    return _build_stripe_client("2025-04-30.basil")
+
+
+@lru_cache(maxsize=1)
+def get_stripe_connect_client() -> StripeClient:
+    """
+    Cached Stripe client for the v2 Core Accounts (Connect) flow.
+
+    The v2 Accounts API is not available on the basil train used by the v1
+    client, so this client pins the dahlia version that exposes it. Override
+    via app.dependency_overrides[get_stripe_connect_client] in tests.
+    """
+    return _build_stripe_client(settings.stripe_connect_api_version)
 
 
 # ---------------------------------------------------------------------------

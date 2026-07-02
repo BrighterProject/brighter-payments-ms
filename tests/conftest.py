@@ -18,6 +18,7 @@ from app.deps import (
     get_notifications_client,
     get_properties_client,
     get_stripe_client,
+    get_stripe_connect_client,
     get_users_client,
 )
 from app.routers.payments import router
@@ -106,6 +107,7 @@ def build_app(
     uc = users_client if users_client is not None else _noop_users_client()
     app.dependency_overrides[get_bookings_client] = lambda: bc
     app.dependency_overrides[get_stripe_client] = lambda: sc
+    app.dependency_overrides[get_stripe_connect_client] = lambda: sc
     app.dependency_overrides[get_notifications_client] = lambda: nc
     app.dependency_overrides[get_properties_client] = lambda: pc
     app.dependency_overrides[get_users_client] = lambda: uc
