@@ -28,6 +28,7 @@ from app.deps import (
     get_stripe_client,
     get_users_client,
     require_owner,
+    resolve_customer_email,
 )
 from app.schemas import (
     CheckoutRequest,
@@ -81,6 +82,7 @@ async def create_checkout(
     current_user: CurrentUser = Depends(get_current_user),
     bookings_client: BookingsClient = Depends(get_bookings_client),
     stripe_client: StripeClient = Depends(get_stripe_client),
+    users_client: UsersClient = Depends(get_users_client),
 ) -> CheckoutResponse:
     """
     Create a Stripe Checkout Session for a pending booking.
@@ -175,7 +177,6 @@ async def create_checkout(
         ],
         # client_reference_id lets us look up the booking in the webhook
         "client_reference_id": str(payload.booking_id),
-        "customer_email": current_user.username,
         "metadata": {
             "booking_id": str(payload.booking_id),
             "user_id": str(current_user.id),
@@ -184,6 +185,9 @@ async def create_checkout(
         "cancel_url": cancel_url,
         "expires_at": int(expires_at.timestamp()),
     }
+    customer_email = await resolve_customer_email(current_user, users_client)
+    if customer_email is not None:
+        checkout_params["customer_email"] = customer_email
     if payment_intent_data:
         checkout_params["payment_intent_data"] = payment_intent_data
 

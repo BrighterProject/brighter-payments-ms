@@ -5,7 +5,15 @@ from stripe import StripeClient
 
 from app import settings
 from app.crud import subscription_crud
-from app.deps import CurrentUser, get_current_user, get_stripe_client, require_scopes
+from app.deps import (
+    CurrentUser,
+    UsersClient,
+    get_current_user,
+    get_stripe_client,
+    get_users_client,
+    require_scopes,
+    resolve_customer_email,
+)
 from app.schemas import (
     OwnerSubscriptionResponse,
     PortalResponse,
@@ -52,6 +60,7 @@ async def subscribe(
     locale: str = "bg",
     current_user: CurrentUser = Depends(get_current_user),
     stripe_client: StripeClient = Depends(get_stripe_client),
+    users_client: UsersClient = Depends(get_users_client),
 ) -> SubscriptionCheckoutResponse:
     plan = await subscription_crud.get_plan_by_slug(plan_slug)
     if plan is None:
@@ -68,11 +77,15 @@ async def subscribe(
     )
     cancel_url = settings.stripe_subscription_cancel_url.replace("{locale}", locale)
 
+    # Prefill the email only when we have a valid one; otherwise Stripe collects
+    # it on its hosted page. Passing an invalid value (e.g. a non-email username)
+    # makes Stripe reject the request with a 400 that surfaces as a 500.
+    customer_email = await resolve_customer_email(current_user, users_client)
+
     session = stripe_client.v1.checkout.sessions.create(
         params={
             "mode": "subscription",
             "line_items": [{"price": plan.stripe_price_id, "quantity": 1}],
-            "customer_email": current_user.username,
             "metadata": {"owner_id": str(current_user.id), "plan_slug": plan_slug},
             "subscription_data": {
                 "metadata": {"owner_id": str(current_user.id), "plan_slug": plan_slug}
@@ -80,6 +93,7 @@ async def subscribe(
             "client_reference_id": str(current_user.id),
             "success_url": success_url,
             "cancel_url": cancel_url,
+            **({"customer_email": customer_email} if customer_email else {}),
         }
     )
     return SubscriptionCheckoutResponse(checkout_url=session.url, session_id=session.id)  # type: ignore

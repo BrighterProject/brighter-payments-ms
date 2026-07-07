@@ -9,7 +9,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.deps import get_current_user, get_stripe_client
+from app.deps import get_current_user, get_stripe_client, get_users_client
 from tests.factories import PROPERTY_OWNER_ID, make_admin, make_property_owner
 
 # ---------------------------------------------------------------------------
@@ -17,7 +17,14 @@ from tests.factories import PROPERTY_OWNER_ID, make_admin, make_property_owner
 # ---------------------------------------------------------------------------
 
 
-def _build_sub_app(current_user):
+def _mock_users_client(email: str | None = "owner@example.com") -> MagicMock:
+    """UsersClient mock whose get_user returns a profile with the given email."""
+    uc = MagicMock()
+    uc.get_user = AsyncMock(return_value={"email": email} if email is not None else None)
+    return uc
+
+
+def _build_sub_app(current_user, users_client=None):
     from app.routers.subscriptions import router as sub_router
 
     app = FastAPI()
@@ -30,6 +37,9 @@ def _build_sub_app(current_user):
 
     mock_stripe = MagicMock()
     app.dependency_overrides[get_stripe_client] = lambda: mock_stripe
+
+    uc = users_client if users_client is not None else _mock_users_client()
+    app.dependency_overrides[get_users_client] = lambda: uc
 
     return app, mock_stripe
 
@@ -237,6 +247,52 @@ def test_subscribe_creates_checkout(sub_owner_client_with_stripe):
     assert resp.json()["checkout_url"] == "https://checkout.stripe.com/s/test"
 
 
+def _subscribe(client, mock_stripe):
+    """Drive a successful checkout and return the params passed to Stripe."""
+    mock_plan = MagicMock(stripe_price_id="price_123", slug="basic")
+    mock_stripe.v1.checkout.sessions.create.return_value = MagicMock(
+        url="https://checkout.stripe.com/s/test", id="cs_test"
+    )
+    with patch("app.routers.subscriptions.subscription_crud") as mock_crud:
+        mock_crud.get_plan_by_slug = AsyncMock(return_value=mock_plan)
+        resp = client.post("/payments/subscriptions/checkout?plan_slug=basic")
+    assert resp.status_code == 201
+    return mock_stripe.v1.checkout.sessions.create.call_args.kwargs["params"]
+
+
+def test_subscribe_non_email_username_uses_users_ms_email():
+    """Regression: a non-email username must not be sent as customer_email.
+
+    Previously `customer_email=current_user.username` reached Stripe with a
+    value like 'sanaogurec26', which Stripe rejects (email_invalid) -> 500.
+    """
+    uc = _mock_users_client(email="real@example.com")
+    client, mock_stripe = _build_sub_app_with_stripe(make_property_owner(), users_client=uc)
+    params = _subscribe(client, mock_stripe)
+    assert params["customer_email"] == "real@example.com"
+    uc.get_user.assert_awaited_once()
+
+
+def test_subscribe_email_username_used_directly_without_users_lookup():
+    """When the username is already an email, use it and skip the users-ms call."""
+    from app.deps import CurrentUser
+
+    user = CurrentUser(id=uuid4(), username="me@example.com", scopes=[])
+    uc = _mock_users_client(email="other@example.com")
+    client, mock_stripe = _build_sub_app_with_stripe(user, users_client=uc)
+    params = _subscribe(client, mock_stripe)
+    assert params["customer_email"] == "me@example.com"
+    uc.get_user.assert_not_awaited()
+
+
+def test_subscribe_omits_customer_email_when_none_available():
+    """No valid email anywhere -> omit customer_email so Stripe collects it."""
+    uc = _mock_users_client(email=None)
+    client, mock_stripe = _build_sub_app_with_stripe(make_property_owner(), users_client=uc)
+    params = _subscribe(client, mock_stripe)
+    assert "customer_email" not in params
+
+
 def test_subscribe_enterprise_returns_422(sub_owner_client):
     mock_plan = MagicMock(stripe_price_id=None, slug="enterprise")
     with patch("app.routers.subscriptions.subscription_crud") as mock_crud:
@@ -258,20 +314,9 @@ def test_subscribe_plan_not_found_returns_404(sub_owner_client):
 # ---------------------------------------------------------------------------
 
 
-def _build_sub_app_with_stripe(current_user):
+def _build_sub_app_with_stripe(current_user, users_client=None):
     """Like _build_sub_app but returns the stripe mock for assertion."""
-    from app.deps import get_current_user, get_stripe_client
-    from app.routers.subscriptions import router as sub_router
-
-    app = FastAPI()
-    app.include_router(sub_router)
-
-    async def _user():
-        return current_user
-
-    app.dependency_overrides[get_current_user] = _user
-    mock_stripe = MagicMock()
-    app.dependency_overrides[get_stripe_client] = lambda: mock_stripe
+    app, mock_stripe = _build_sub_app(current_user, users_client=users_client)
     return TestClient(app, raise_server_exceptions=True), mock_stripe
 
 
