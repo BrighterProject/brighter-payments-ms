@@ -8,3 +8,6 @@ htmlcov/
 .ruff_cache/
 dist/
 *.egg-info/
+
+# Generated OpenAPI export (produced on demand for brighter-docs)
+openapi.json
