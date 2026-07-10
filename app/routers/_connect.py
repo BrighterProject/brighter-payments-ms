@@ -11,7 +11,7 @@ from stripe import StripeClient
 
 from app import settings
 from app.crud_connect import connect_crud
-from app.deps import CurrentUser, get_stripe_client, require_owner
+from app.deps import CurrentUser, get_stripe_connect_client, require_owner
 from app.schemas import ConnectStatusResponse, OnboardResponse, UpdateResponse
 
 router = APIRouter(prefix="/payments/connect", tags=["stripe-connect"])
@@ -85,7 +85,7 @@ async def connect_status(
 @router.post("/onboard", response_model=OnboardResponse)
 async def onboard_connect(
     current_user: CurrentUser = Depends(require_owner),
-    stripe_client: StripeClient = Depends(get_stripe_client),
+    stripe_client: StripeClient = Depends(get_stripe_connect_client),
     entity_type: Literal["company", "government_entity", "individual", "non_profit"] = "individual",
     country: CountryAlpha2 = CountryAlpha2("BG"),
     upfront: bool = False,  # whether to collect eventually_due
@@ -153,7 +153,7 @@ async def onboard_connect(
 @router.get("/refresh")
 async def refresh_stripe_onboarding(
     current_user: CurrentUser = Depends(require_owner),
-    stripe_client: StripeClient = Depends(get_stripe_client),
+    stripe_client: StripeClient = Depends(get_stripe_connect_client),
 ):
     account = await connect_crud.get_by_owner(current_user.id)
 
@@ -180,7 +180,7 @@ async def refresh_stripe_onboarding(
 @router.get("/update")
 async def update_stripe_account(
     current_user: CurrentUser = Depends(require_owner),
-    stripe_client: StripeClient = Depends(get_stripe_client),
+    stripe_client: StripeClient = Depends(get_stripe_connect_client),
 ):
     account = await connect_crud.get_by_owner(current_user.id)
 
@@ -208,7 +208,7 @@ async def update_stripe_account(
 @router.delete("/", status_code=status.HTTP_204_NO_CONTENT)
 async def disconnect_connect(
     current_user: CurrentUser = Depends(require_owner),
-    stripe_client: StripeClient = Depends(get_stripe_client),
+    stripe_client: StripeClient = Depends(get_stripe_connect_client),
 ) -> None:
     """
     Close the owner's Stripe v2 account and remove the local record.
@@ -236,7 +236,7 @@ async def disconnect_connect(
 @router.post("/webhook")
 async def connect_webhook(
     request: Request,
-    stripe_client: StripeClient = Depends(get_stripe_client),
+    stripe_client: StripeClient = Depends(get_stripe_connect_client),
 ) -> dict:
     """
     Webhook endpoint for the Stripe Connect / v2 event destination.

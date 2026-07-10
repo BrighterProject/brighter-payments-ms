@@ -16,6 +16,12 @@ stripe_webhook_secret = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
 stripe_connect_webhook_secret = os.environ.get(
     "STRIPE_CONNECT_WEBHOOK_SECRET", "whsec_connect_placeholder"
 )
+# Stripe API version for the v2 Core Accounts (Connect) flow. The v1 checkout
+# client stays pinned to 2025-04-30.basil, but the v2 Accounts API is only
+# exposed on the dahlia train — calling it with basil returns 404 not_found.
+stripe_connect_api_version = os.environ.get(
+    "STRIPE_CONNECT_API_VERSION", "2026-05-27.dahlia"
+)
 
 _is_live_key = stripe_secret_key.startswith("sk_live_")
 if _is_live_key and not stripe_webhook_secret:

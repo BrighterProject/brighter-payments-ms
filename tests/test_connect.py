@@ -11,7 +11,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from stripe import AccountLink
 
-from app.deps import get_current_user, get_stripe_client
+from app.deps import get_current_user, get_stripe_connect_client
 from app.routers._connect import router as connect_router
 
 from .factories import PROPERTY_OWNER_ID, make_property_owner
@@ -51,7 +51,7 @@ def build_connect_app(current_user, stripe_client=None) -> FastAPI:
     app.include_router(connect_router)
     app.dependency_overrides[get_current_user] = lambda: current_user
     sc = stripe_client if stripe_client is not None else _noop_stripe_client()
-    app.dependency_overrides[get_stripe_client] = lambda: sc
+    app.dependency_overrides[get_stripe_connect_client] = lambda: sc
     return app
 
 
